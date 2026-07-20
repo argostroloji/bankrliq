@@ -366,6 +366,9 @@ function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 /* x402-aware fetch: inside the Bankr terminal iframe the platform intercepts
    402 responses and pays automatically. On direct access we surface it. */
 async function api(path, opts) {
+  opts = opts || {};
+  const auth = cachedOwnerAuth();
+  if (auth) opts.headers = { ...(opts.headers || {}), "x-owner-auth": btoa(JSON.stringify(auth)) };
   const res = await fetch(path, opts);
   let data = null;
   try { data = await res.json(); } catch { /* non-json */ }
@@ -401,6 +404,7 @@ async function connectWallet() {
   prefillWalletFields();
   toast("Wallet connected: " + short(state.account));
   maybeAutoFetchPositions();
+  maybeOwnerAuth();
 }
 /* Bankr/Privy injects an already-authorized provider inside the terminal
    iframe — detect it silently (no popup) so the app is usable immediately.
@@ -414,8 +418,52 @@ async function silentDetectWallet() {
       reflectWalletUi();
       prefillWalletFields();
       maybeAutoFetchPositions();
+      maybeOwnerAuth();
     }
   } catch { /* silent by design */ }
+}
+
+/* ------- owner mode: the app owner's wallet uses the API for free -------
+   If the connected wallet is the owner address (from /api/health), ask for
+   one personal_sign; the signature is cached ~1 week and attached to API
+   calls, which the server verifies and lets through without x402. */
+let ownerAddrPromise = null;
+function fetchOwnerAddress() {
+  if (!ownerAddrPromise) {
+    ownerAddrPromise = fetch("/api/health")
+      .then((r) => r.json())
+      .then((h) => (h.owner || "").toLowerCase())
+      .catch(() => "");
+  }
+  return ownerAddrPromise;
+}
+function cachedOwnerAuth() {
+  try {
+    const o = JSON.parse(localStorage.getItem("bankrliq_owner_auth") || "null");
+    if (!o || !o.signature) return null;
+    if (!state.account || o.address.toLowerCase() !== state.account.toLowerCase()) return null;
+    if (Date.now() - o.timestamp > 6.5 * 24 * 60 * 60 * 1000) return null;
+    return o;
+  } catch { return null; }
+}
+function reflectOwnerUi() {
+  if (!cachedOwnerAuth()) return;
+  $("walletChip").textContent = short(state.account) + " · OWNER FREE";
+}
+async function maybeOwnerAuth() {
+  if (!state.account) return;
+  const owner = await fetchOwnerAddress();
+  if (!owner || state.account.toLowerCase() !== owner) return;
+  if (cachedOwnerAuth()) { reflectOwnerUi(); return; }
+  try {
+    const timestamp = Date.now();
+    const message = `BANKRLIQ owner access\n${state.account.toLowerCase()}\n${timestamp}`;
+    const hex = "0x" + Array.from(new TextEncoder().encode(message)).map((b) => b.toString(16).padStart(2, "0")).join("");
+    const signature = await eth().request({ method: "personal_sign", params: [hex, state.account] });
+    localStorage.setItem("bankrliq_owner_auth", JSON.stringify({ address: state.account, timestamp, signature }));
+    reflectOwnerUi();
+    toast("Owner mode active — API calls are free for this wallet");
+  } catch { /* user declined the signature; paid mode continues */ }
 }
 async function ensureChain(chainKey) {
   const c = CHAINS[chainKey];
@@ -938,6 +986,7 @@ function bindProviderEvents() {
     autoFetchedKey = "";
     $("p-results").innerHTML = "";
     maybeAutoFetchPositions();
+    maybeOwnerAuth();
   });
 }
 bindProviderEvents();

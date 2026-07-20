@@ -394,6 +394,34 @@ async function estimate24hVolumeUsd(chainKey, pool, meta0, meta1) {
 
 const X402_MODE = process.env.X402_MODE || "platform";
 const X402_PAY_TO = process.env.X402_PAY_TO || "0xa2baa5527e25de10099096a3257d0b1938f095b1";
+// The app owner's wallet rides free: a request carrying a fresh signature from
+// this address bypasses x402 (see isOwnerRequest). Defaults to the payout wallet.
+const OWNER_ADDRESS = (process.env.OWNER_ADDRESS || X402_PAY_TO).toLowerCase();
+const OWNER_AUTH_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+const ownerAuthCache = new Map(); // rawHeader -> {ok, t}
+async function isOwnerRequest(req) {
+  const raw = req.headers["x-owner-auth"];
+  if (!raw || typeof raw !== "string" || raw.length > 4096) return false;
+  const hit = ownerAuthCache.get(raw);
+  if (hit && Date.now() - hit.t < 10 * 60_000) return hit.ok;
+  let ok = false;
+  try {
+    const { address, timestamp, signature } = JSON.parse(Buffer.from(raw, "base64").toString("utf8"));
+    const age = Date.now() - Number(timestamp);
+    if (
+      address &&
+      address.toLowerCase() === OWNER_ADDRESS &&
+      age > -5 * 60_000 && age < OWNER_AUTH_MAX_AGE_MS
+    ) {
+      const message = `BANKRLIQ owner access\n${address.toLowerCase()}\n${timestamp}`;
+      // client.verifyMessage handles both EOA and ERC-1271 smart wallets
+      ok = await client("base").verifyMessage({ address, message, signature });
+    }
+  } catch { ok = false; }
+  ownerAuthCache.set(raw, { ok, t: Date.now() });
+  return ok;
+}
 const X402_FACILITATOR = process.env.X402_FACILITATOR_URL || "https://x402.org/facilitator";
 const BASE_USDC = CHAINS.base.usdc;
 
@@ -428,6 +456,7 @@ function x402Requirements(routeKey, resourceUrl) {
 async function enforceX402(req, routeKey, resourceUrl) {
   if (!X402_PRICES[routeKey]) return null; // unpriced route (e.g. /api/health)
   if (X402_MODE === "off") return null;
+  if (await isOwnerRequest(req)) return null; // owner wallet rides free
 
   const paymentHeader =
     req.headers["x-payment"] ||
@@ -984,6 +1013,7 @@ async function handleHealth() {
   return {
     app: "BANKRLIQ",
     x402: { mode: X402_MODE, payTo: X402_PAY_TO, prices: X402_PRICES },
+    owner: OWNER_ADDRESS,
     chains: { base, robinhood },
   };
 }
@@ -999,7 +1029,7 @@ function sendJson(res, status, obj) {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "access-control-allow-origin": "*",
-    "access-control-allow-headers": "content-type, x-payment, x-402-payment, x-bankr-payment",
+    "access-control-allow-headers": "content-type, x-payment, x-402-payment, x-bankr-payment, x-owner-auth",
     "access-control-allow-methods": "GET, POST, OPTIONS",
   });
   res.end(body);
@@ -1033,7 +1063,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
       "access-control-allow-origin": "*",
-      "access-control-allow-headers": "content-type, x-payment, x-402-payment, x-bankr-payment",
+      "access-control-allow-headers": "content-type, x-payment, x-402-payment, x-bankr-payment, x-owner-auth",
       "access-control-allow-methods": "GET, POST, OPTIONS",
     });
     return res.end();
