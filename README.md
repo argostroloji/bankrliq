@@ -1,43 +1,38 @@
-# BANKRLIQ
+# BANKRLIQ — Bankr Liquidity Manager
 
-Bankr Apps için Uniswap V3 LP yönetim uygulaması (UI dili: **İngilizce**). Havuz keşfi (CA araması, likidite payı + öneri rozetleri), pozisyon açma (±10% / ±20% / Full Range / manuel), ücretsiz pozisyon izleme (token filtresi, tek tıkla kapatma) — işlem hazırlama x402 ile ücretlendirilir. App **private key tutmaz**; sadece on-chain okuma yapar ve calldata hazırlar, kullanıcı kendi cüzdanıyla (Bankr/Privy) imzalar.
+Uniswap V3 LP yönetimi (Base + Robinhood Chain) — **Bankr Apps** için inşa edildi. Standalone web app değildir: frontend Bankr terminal iframe'inde (`window.bankr` SDK), backend script'leri Bankr'ın Bun sandbox'ında (enjekte `bankr.*` globalleri) çalışır. npm paketi yok, viem/ethers yok, dış CDN yok — tick math dahil her şey saf JS.
 
-## Dosyalar
+## Dosya yapısı
 
 | Dosya | Ne |
 |---|---|
-| `index.html` | Frontend — tek dosya, CSS/JS gömülü, dış bağımlılık/CDN yok. Bankr terminal iframe'inde çalışır. 3 sekme: Discover / Open / My Positions. Havuz kartından direkt pozisyon açılır (gömülü form); kapatma (tam + kısmi %25/50/75) pozisyon kartının içindedir. Cüzdan sessizce algılanır, My Positions otomatik yüklenir. |
-| `server.js` | Backend — Node.js (ESM), tek bağımlılık `viem`. Uniswap V3 kontratlarını okur, mint/close calldata'sı üretir, x402 zorlar. `/` yolunda `index.html`'i de servis eder. |
-| `package.json` | Bağımlılıklar (`viem`). |
+| `manifest.json` | App manifesti — permissions, publicScripts + limitleri, publicDataKeys, dataSchemas, x402 allowedHosts |
+| `index.html` | Tek dosya frontend (inline CSS+JS, dış istek yok). 4 sekme: Discover / My Positions / Open / Close. `bankr.on('ready')`, signed-out fallback, loading/empty/error/stale state'leri |
+| `scripts/getPools.ts` | **Public** script (≤10 read, ≤5s, ≤8KB): WETH/stable 4 tier'ı 2 multicall'da okur, `pools_snapshot_*` appKV anahtarına şema-uyumlu snapshot yazar. 24s hacim feeGrowthGlobal deltasından (log taraması yok) |
+| `scripts/getPositions.ts` | Viewer script (**ücretsiz**): caller'ın LP NFT'leri — miktarlar, in-range, feeGrowthInside matematiğiyle toplanmamış fee'ler |
+| `scripts/prepareMint.ts` | mint calldata + approve'lar → `bankr.tx.prepare` blob'ları |
+| `scripts/prepareDecrease.ts` | decreaseLiquidity (slippage korumalı min'ler saf JS sqrt matematiğiyle) |
+| `scripts/prepareCollect.ts` | collect (max uint128 her iki taraf) |
+| `scripts/prepareBurn.ts` | burn |
+| `x402/pool-finder.ts` | **$0.05** paid endpoint: özel pair / CA araması, canlı TVL + Swap loglarından 24s hacim + APR |
+| `x402/liq-action.ts` | **$0.50** paid endpoint: `action: mint\|decrease\|collect\|burn\|close` → tx blob'ları. `close` = decreaseLiquidity+collect(+burn) TEK multicall imzası |
 
-## x402 Fiyatlandırma
+## Akışlar ve fiyatlandırma
 
-| Endpoint | Fiyat (USDC) | İş |
-|---|---|---|
-| `GET /api/pools?chain=base\|robinhood&token0=&token1=&fee=` | **$0.05** | Havuz keşfi: slot0, liquidity, TVL, 24s hacim/fee tahmini, APR. Sadece `token0` verilirse **CA araması**: token, WETH + stable (USDC/USDG) ile eşleştirilip tüm tier'lar taranır |
-| `GET /api/positions?chain=&owner=&token=` | **ücretsiz** | Kullanıcının LP NFT'leri: likidite, range, in/out-of-range, toplanmamış fee (feeGrowth matematiğiyle). Opsiyonel `token` (CA) parametresi pozisyonları o token'a filtreler. Pozisyon kartındaki "Tek Tıkla Kapat" $0.50'lik `POST /api/position`'ı çağırır |
-| `POST /api/position` (`action: "open"`) | **$0.50** | approve + `NonfungiblePositionManager.mint()` calldata |
-| `POST /api/position` (`action: "close"`) | **$0.50** | `decreaseLiquidity + collect (+ burn)` tek multicall calldata |
-| `GET /api/health` | ücretsiz | Zincir/kontrat doğrulama durumu, x402 konfig |
+- **Discover**: `appKV` snapshot'ı anında gösterilir (15 dk'dan eskiyse STALE rozeti) → "Snapshot refresh" ücretsiz public `getPools` → "Deep Search" `bankr.x402.fetch` ile pool-finder (**$0.05**), kartlarda likidite payı + MOST LIQUID / TOP APR rozetleri, "Open here" ile Open sekmesine prefill.
+- **My Positions**: ücretsiz (`invokeScript('getPositions')`), sekme açılınca otomatik yüklenir; kartta range görseli, in-range rozeti, toplanabilir fee'ler, One-Click Close (**$0.50**, tek imza).
+- **Open**: pair + fee + miktar + range (±10% / ±20% / Full Range / Manuel) → liq-action mint (**$0.50**) → dönen blob'lar sırayla `bankr.confirmTransaction` ile imzalanır (approve'lar → mint).
+- **Close**: tokenId + yüzde → tek imza close (**$0.50**) ya da gelişmiş modda decrease/collect/burn adım adım (her biri $0.50).
 
-402 yanıtı x402 v1 şemasındadır (`accepts[]` içinde scheme=exact, network=base, asset=Base USDC). Bankr'ın platform katmanı ödemeyi otomatik yapar; app içinde kullanıcıya ekstra bir şey düşmez.
+## Deploy
 
-## Deploy (Bankr Apps)
+1. **App**: `manifest.json` + `index.html` + `scripts/*.ts` Bankr Apps'e yüklenir (slug `bankrliq`). Script adları manifest'teki `scripts` listesiyle birebir.
+2. **x402 endpoint'leri** ayrı deploy edilir (Bankr Cloud, `x402.bankr.bot` host'u): `x402/pool-finder.ts` → $0.05, `x402/liq-action.ts` → $0.50. Ödemeler endpoint sahibinin Bankr cüzdanına akar.
+3. Deploy sonrası `index.html` başındaki `X402_POOL_FINDER` ve `X402_LIQ_ACTION` URL'lerini gerçek endpoint URL'lerinle güncelle (host `manifest.json > x402.allowedHosts` içinde olmalı).
 
-1. `npm install` (tek bağımlılık: viem)
-2. `server.js`'i Bankr script runtime'ına yükle; `index.html` aynı dizinde olmalı (server `/`'dan servis eder, ayrıca iframe kaynağı olarak doğrudan da verilebilir).
-3. Ortam değişkenleri (hepsi opsiyonel):
-   - `PORT` (varsayılan 3402)
-   - `X402_MODE` — `platform` (varsayılan; Bankr gateway ödemeyi çözer, proof header'ı zorunlu), `facilitator` (server kendisi verify eder, `X402_FACILITATOR_URL`), `off` (lokal geliştirme)
-   - `X402_PAY_TO` — USDC alıcısı (varsayılan: Bankr gelir cüzdanı `0xa2ba…95b1`)
-   - `BASE_RPC_URL` (varsayılan publicnode — mainnet.base.org burst'lerde 429 atıyor), `BASE_LOGS_RPC_URL` (varsayılan mainnet.base.org — publicnode `eth_getLogs`'u token'a bağlamış), `ROBINHOOD_RPC_URL`
-   - `VOLUME_WINDOW_BLOCKS` — hacim örneklem penceresi (varsayılan: Base 2000, Robinhood 9000 blok)
-   - `ROBINHOOD_NPM`, `ROBINHOOD_FACTORY` — aşağıya bak
-4. Lokal test: `X402_MODE=off node server.js` → http://localhost:3402
+## Doğrulanmış kontrat adresleri (2026-07-20, zincirden)
 
-## Doğrulanmış kontrat adresleri (2026-07-20, on-chain)
-
-Spekteki adresler zincir üstünde **doğrulanamadı** (o adreslerde bytecode yok); gerçek adresler zincirin kendisinden keşfedildi — canlı havuzun `factory()` getter'ı, NPM'in `IncreaseLiquidity` event'leri ve `WETH9()` getter'ı üzerinden. CREATE2 pool türetmesi ve `getPool()` çapraz doğrulandı.
+Spek adreslerinin zincirde **kodu yok**; gerçek adresler canlı havuzların `factory()` getter'ı, NPM'in `IncreaseLiquidity` event'leri ve `WETH9()` üzerinden keşfedilip CREATE2 ile çapraz doğrulandı:
 
 | | Base (8453) | Robinhood Chain (4663) |
 |---|---|---|
@@ -46,24 +41,15 @@ Spekteki adresler zincir üstünde **doğrulanamadı** (o adreslerde bytecode yo
 | WETH | `0x4200000000000000000000000000000000000006` | `0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73` |
 | Dolar stable | USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | **USDG** `0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168` (6 dec) |
 
-Robinhood Chain Arbitrum Orbit tabanlı: 0x4200 predeploy'ları YOK, USDC yok — dolar stable'ı USDG. RPC: `https://rpc.mainnet.chain.robinhood.com`, explorer: robinhoodchain.blockscout.com.
+Robinhood Chain Arbitrum Orbit tabanlıdır: 0x4200 predeploy'ları ve USDC yoktur — stable USDG'dir.
 
-Server yine de her zincirde NPM + Factory'yi **runtime'da `getCode` ile doğrular** (cache'li); kod yoksa endpoint'ler açık uyarı döner ve `GET /api/health` hangi kontratın eksik olduğunu gösterir. Adresler `ROBINHOOD_NPM` / `ROBINHOOD_FACTORY` env'leriyle ezilebilir.
+## Güvenlik
 
-## Owner mode — sahibin ücretsiz kullanımı
+- Private key yok; tüm işlemler `bankr.tx.prepare` blob'u + kullanıcının `bankr.confirmTransaction` imzasıyla.
+- Script'ler yalnızca on-chain okuma + calldata üretir. Approve'lar tam ihtiyaç kadar (sınırsız approve yok), mint/decrease slippage korumalı, deadline 20 dk.
+- Public script (`getPools`) wallet/tx/secrets kullanmaz; sadece okuma + appKV yazımı. Rate limit'ler manifest'te.
+- x402 ödemesi paid endpoint'lerde Bankr altyapısınca zorunlu kılınır.
 
-`OWNER_ADDRESS` (varsayılan: `X402_PAY_TO`) cüzdanı app'i ücretsiz kullanır. Akış: owner cüzdanı bağlanınca frontend bir kez `personal_sign` ister (`BANKRLIQ owner access\n<adres>\n<timestamp>`), imza ~1 hafta localStorage'da saklanır ve her API çağrısına `x-owner-auth` header'ı olarak eklenir. Server imzayı `verifyMessage` ile doğrular (EOA + ERC-1271 smart wallet) ve x402'yi atlar. İmza 7 gün sonra geçersiz sayılır; sahte/başka cüzdan imzaları 402 alır. Cüzdan chip'inde "OWNER FREE" rozeti görünür.
+## Test
 
-## Güvenlik modeli
-
-- Private key yok, imza yok — server sadece `eth_call`/`getLogs` + calldata encode eder.
-- Tüm işlemler kullanıcının cüzdanında imzalanır (`eth_sendTransaction`, from = kullanıcı).
-- Approve'lar tam ihtiyaç kadar (`amountDesired`), sınırsız approve yok.
-- Slippage koruması: mint'te `amount0Min/amount1Min`, kapatmada `decreaseLiquidity` minimumları (varsayılan 100 bps, kullanıcı ayarlar).
-- x402 doğrulaması her ücretli endpoint'te zorunlu (`X402_MODE=off` sadece geliştirme için).
-
-## Teknik özet
-
-- 24s hacim: pool'un son ~2000 bloğundaki `Swap` event'leri örneklenir, blok zaman damgalarıyla 24 saate ölçeklenir (kartta not düşülür). USD çevrimi USDC bacağından, yoksa WETH/USDC üzerinden.
-- Toplanmamış fee: `feeGrowthGlobal − feeGrowthOutside` (mod 2²⁵⁶) formülüyle tam hesap, `tokensOwed` üstüne eklenir.
-- Tick math: TickMath `getSqrtRatioAtTick` BigInt portu; auto range ±10%/±20% tick'e çevrilip `tickSpacing`'e hizalanır.
+Tüm script'ler, `bankr.*` globallerini viem üzerinde taklit eden bir harness ile **canlı zincirlere karşı** test edildi (25/25): snapshot şema+bütçe uyumu, feeGrowth-delta hacim, gerçek pozisyonda fee matematiği, mint calldata decode, close multicall'unun pozisyon sahibinden `eth_call` simülasyonu, CA araması, hata yolları.

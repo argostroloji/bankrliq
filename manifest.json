@@ -1,0 +1,84 @@
+{
+  "slug": "bankrliq",
+  "title": "Bankr Liquidity Manager",
+  "description": "Uniswap V3 likidite havuz keşfi, pozisyon açma/kapatma ve izleme — Base + Robinhood Chain",
+  "permissions": ["read:chain", "read:appdata", "write:appdata", "pay:x402"],
+  "frontendIdentity": "viewer",
+  "scripts": ["getPools", "getPositions", "prepareMint", "prepareDecrease", "prepareCollect", "prepareBurn"],
+  "publicDataKeys": ["pools_snapshot_base", "pools_snapshot_robinhood"],
+  "publicScripts": ["getPools"],
+  "publicScriptLimits": [
+    {
+      "name": "getPools",
+      "value": {
+        "maxChainReads": 10,
+        "maxExecMs": 5000,
+        "maxReturnBytes": 8192,
+        "perViewerRateLimit": { "rpm": 10, "rph": 100 },
+        "perAppRateLimit": { "rph": 1000 }
+      }
+    }
+  ],
+  "x402": {
+    "maxPaymentUsdPerCall": 0.5,
+    "allowedHosts": ["x402.bankr.bot"]
+  },
+  "dataSchemas": [
+    {
+      "name": "pools_snapshot_base",
+      "schema": {
+        "type": "object",
+        "required": ["pools", "updatedAt"],
+        "properties": [
+          {
+            "name": "pools",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["pair", "fee", "tvl", "volume24h", "apr", "currentPrice"],
+                "properties": [
+                  { "name": "pair", "schema": { "type": "string" } },
+                  { "name": "fee", "schema": { "type": "number" } },
+                  { "name": "tvl", "schema": { "type": "number" } },
+                  { "name": "volume24h", "schema": { "type": "number" } },
+                  { "name": "apr", "schema": { "type": "number" } },
+                  { "name": "currentPrice", "schema": { "type": "string" } }
+                ]
+              }
+            }
+          },
+          { "name": "updatedAt", "schema": { "type": "number" } }
+        ]
+      }
+    },
+    {
+      "name": "pools_snapshot_robinhood",
+      "schema": {
+        "type": "object",
+        "required": ["pools", "updatedAt"],
+        "properties": [
+          {
+            "name": "pools",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["pair", "fee", "tvl", "volume24h", "apr", "currentPrice"],
+                "properties": [
+                  { "name": "pair", "schema": { "type": "string" } },
+                  { "name": "fee", "schema": { "type": "number" } },
+                  { "name": "tvl", "schema": { "type": "number" } },
+                  { "name": "volume24h", "schema": { "type": "number" } },
+                  { "name": "apr", "schema": { "type": "number" } },
+                  { "name": "currentPrice", "schema": { "type": "string" } }
+                ]
+              }
+            }
+          },
+          { "name": "updatedAt", "schema": { "type": "number" } }
+        ]
+      }
+    }
+  ]
+}
