@@ -71,6 +71,13 @@ function amountsForLiquidity(sqrtP, sqrtA, sqrtB, L) {
 const norm = (r) => (r && typeof r === "object" && "result" in r ? r.result : r);
 const ZERO = "0x0000000000000000000000000000000000000000";
 
+// OWNER-ONLY free path (everyone else: paid liq-action endpoint, $0.50)
+const OWNER = "0xa2baa5527e25de10099096a3257d0b1938f095b1";
+const callerAddr = ctx && ctx.caller && ctx.caller.walletAddress;
+if (!callerAddr || callerAddr.toLowerCase() !== OWNER) {
+  return { error: "owner-only script — use the paid liq-action endpoint ($0.50)" };
+}
+
 const a = args || {};
 const chainKey = a.chain === "robinhood" ? "robinhood" : "base";
 const cfg = CHAINS[chainKey];
@@ -118,5 +125,5 @@ return {
   chain: chainKey, tokenId: tokenId.toString(),
   liquidityRemoved: liqToRemove.toString(),
   amount0Min: amount0Min.toString(), amount1Min: amount1Min.toString(),
-  txBlobs: [{ label: "Decrease liquidity #" + tokenId, blob }],
+  txBlobs: [{ label: "Decrease liquidity #" + tokenId, blob, raw: { chain: chainKey, to: cfg.npm, data, value: "0x0" } }],
 };

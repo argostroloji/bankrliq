@@ -30,6 +30,19 @@ Uniswap V3 LP yönetimi (Base + Robinhood Chain) — **Bankr Apps** için inşa 
 2. **x402 endpoint'leri** ayrı deploy edilir (Bankr Cloud, `x402.bankr.bot` host'u): `x402/pool-finder.ts` → $0.05, `x402/liq-action.ts` → $0.50. Ödemeler endpoint sahibinin Bankr cüzdanına akar.
 3. Deploy sonrası `index.html` başındaki `X402_POOL_FINDER` ve `X402_LIQ_ACTION` URL'lerini gerçek endpoint URL'lerinle güncelle (host `manifest.json > x402.allowedHosts` içinde olmalı).
 
+## Owner mode — sahibin ücretsiz kullanımı
+
+Sahibin cüzdanı (`0xa2ba…95b1`) app'i tamamen ücretsiz kullanır. Mekanizma: paralı x402 endpoint'lerinin **ücretsiz invokeScript ikizleri** var — `findPools` (pool-finder'ın ikizi) ve `prepareMint/Decrease/Collect/Burn/Close` (liq-action'ın ikizleri). Bu script'ler sunucu tarafında `ctx.caller.walletAddress` ile **owner'a kilitli** (Bankr auth'undan gelir, taklit edilemez); owner olmayan çağıran "owner-only" hatası alıp paralı endpoint'e yönlendirilir. Frontend cüzdanı görünce otomatik yönlendirir: owner bağlıysa tüm fiyat etiketleri "FREE" olur ve çipte "OWNER FREE" görünür; başka herkes x402 ile öder. Owner adresini değiştirmek için script'lerdeki ve `index.html`'deki `OWNER` sabitini güncelle.
+
+## Agent API — insanların agent'ları da kullanabilir
+
+İki x402 endpoint'i cüzdanı olan **herhangi bir agent'ın** kayıt olmadan, çağrı başına USDC ödeyerek kullanabileceği düz HTTP API'leridir (x402 zaten agent ödemeleri için tasarlandı). Agent-dostu iki ek:
+
+- Her `txBlobs` girdisi Bankr-native `blob`'un yanında **`raw: { chain, to, data, value }`** taşır — Bankr dışı bir agent (Claude, kendi botun, herhangi bir x402 istemcisi) calldata'yı alıp kendi cüzdanıyla imzalayıp gönderebilir.
+- Kök dizindeki **`bankr.x402.json`** makine-okunur spec'tir: endpoint adları, fiyatlar, input şemaları, çıktı biçimleri, kontrat adresleri. Agent'lar bunu okuyarak API'yi keşfeder.
+
+Tipik agent akışı: `pool-finder`'a $0.05 öde → havuz seç → `liq-action`'a $0.50 öde (`action: "mint"` veya `"close"`) → dönen `raw` calldata'yı kendi cüzdanınla imzala. Sunucu tarafında hiçbir şey imzalanmaz/gönderilmez.
+
 ## Doğrulanmış kontrat adresleri (2026-07-20, zincirden)
 
 Spek adreslerinin zincirde **kodu yok**; gerçek adresler canlı havuzların `factory()` getter'ı, NPM'in `IncreaseLiquidity` event'leri ve `WETH9()` üzerinden keşfedilip CREATE2 ile çapraz doğrulandı:

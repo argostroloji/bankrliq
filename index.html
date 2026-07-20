@@ -140,7 +140,7 @@
         </div>
       </div>
       <div class="row" style="margin-top:10px">
-        <button id="d-go">Deep Search <span style="color:#d8ceff">· $0.05</span></button>
+        <button id="d-go">Deep Search <span class="px" style="color:#d8ceff">· $0.05</span></button>
         <span id="d-spin" class="hidden"><span class="spinner"></span></span>
       </div>
     </div>
@@ -202,7 +202,7 @@
       <div class="grid g2" style="margin-top:9px">
         <div><label>Slippage (bps)</label><input type="number" id="o-slippage" value="100" min="0" max="5000"></div>
         <div style="display:flex; align-items:flex-end">
-          <button id="o-go" style="width:100%">Prepare Mint <span style="color:#d8ceff">· $0.50</span></button>
+          <button id="o-go" style="width:100%">Prepare Mint <span class="px" style="color:#d8ceff">· $0.50</span></button>
         </div>
       </div>
       <div class="row" style="margin-top:8px"><span id="o-spin" class="hidden"><span class="spinner"></span></span></div>
@@ -228,12 +228,12 @@
         <div><label>Slippage (bps)</label><input type="number" id="c-slippage" value="100" min="0" max="5000"></div>
       </div>
       <div class="row" style="margin-top:10px">
-        <button id="c-oneclick" class="danger">One Signature Close <span style="opacity:.8">· $0.50</span></button>
+        <button id="c-oneclick" class="danger">One Signature Close <span class="px" style="opacity:.8">· $0.50</span></button>
         <span id="c-spin" class="hidden"><span class="spinner"></span></span>
       </div>
       <p class="muted" style="margin-top:7px">One multicall signature: decreaseLiquidity + collect (+ burn on 100%).</p>
       <div style="margin-top:12px; border-top:1px solid var(--border); padding-top:10px">
-        <label>Advanced — run the steps separately ($0.50 each)</label>
+        <label id="c-adv-label">Advanced — run the steps separately ($0.50 each)</label>
         <div class="row" style="margin-top:4px">
           <button id="c-decrease" class="ghost">1. Decrease</button>
           <button id="c-collect" class="ghost">2. Collect</button>
@@ -259,6 +259,11 @@
 // Update these after deploying the two x402 handlers (see README).
 var X402_POOL_FINDER = "https://x402.bankr.bot/0xa2baa5527e25de10099096a3257d0b1938f095b1/bankrliq-pool-finder";
 var X402_LIQ_ACTION = "https://x402.bankr.bot/0xa2baa5527e25de10099096a3257d0b1938f095b1/bankrliq-liq-action";
+
+// The app owner's wallet uses everything for free: the frontend routes owner
+// calls through free invokeScript twins (owner-gated server-side via ctx.caller)
+// instead of the paid x402 endpoints.
+var OWNER = "0xa2baa5527e25de10099096a3257d0b1938f095b1";
 
 var CHAINS = {
   base: {
@@ -323,6 +328,28 @@ async function paidFetch(url, opts) {
   }
   if (res.body && res.body.error) throw new Error(res.body.error);
   return res.body;
+}
+
+function isOwner() {
+  return !!(state.wallet && state.wallet.toLowerCase() === OWNER);
+}
+/* Owner rides free via invokeScript twins; everyone else pays via x402. */
+async function liqAction(body) {
+  if (isOwner()) {
+    var map = { mint: "prepareMint", decrease: "prepareDecrease", collect: "prepareCollect", burn: "prepareBurn", close: "prepareClose" };
+    var r = await sdk().invokeScript(map[body.action], body);
+    if (r && r.error) throw new Error(r.error);
+    return r;
+  }
+  return paidFetch(X402_LIQ_ACTION, { method: "POST", body: body, maxPaymentUsd: 0.5 });
+}
+async function deepSearch(q) {
+  if (isOwner()) {
+    var r = await sdk().invokeScript("findPools", q);
+    if (r && r.error) throw new Error(r.error);
+    return r;
+  }
+  return paidFetch(X402_POOL_FINDER, { method: "POST", body: q, maxPaymentUsd: 0.05 });
 }
 
 /* sequential tx-blob signing UI */
@@ -449,7 +476,7 @@ $("d-go").addEventListener("click", async function () {
     if (t0) q.token0 = t0;
     if (t1) q.token1 = t1;
     if ($("d-fee").value) q.fee = Number($("d-fee").value);
-    var data = await paidFetch(X402_POOL_FINDER, { method: "POST", body: q, maxPaymentUsd: 0.05 });
+    var data = await deepSearch(q);
     renderDeepPools(data);
   } catch (e) { toast(e.message, true); }
   $("d-spin").classList.add("hidden");
@@ -559,7 +586,7 @@ function renderPositions(data) {
       fmtNum(p.feesOwed0) + " " + esc(p.token0.symbol) + "<br>" + fmtNum(p.feesOwed1) + " " + esc(p.token1.symbol) + "</div></div>" +
       "</div>" +
       '<div class="row" style="margin-top:9px">' +
-      '<button class="danger" data-close>One-Click Close <span style="opacity:.8">· $0.50</span></button>' +
+      '<button class="danger" data-close>One-Click Close <span style="opacity:.8">' + closePrice() + "</span></button>" +
       '<button class="ghost" data-partial>Partial close</button>' +
       '<span class="muted">tick ' + p.tickLower + " → " + p.tickUpper + " · current " + (p.currentTick == null ? "—" : p.currentTick) + "</span>" +
       "</div>";
@@ -568,18 +595,14 @@ function renderPositions(data) {
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> preparing…';
       try {
-        var d = await paidFetch(X402_LIQ_ACTION, {
-          method: "POST",
-          body: { action: "close", chain: chainKey, tokenId: p.tokenId, percent: 100, burn: true },
-          maxPaymentUsd: 0.5,
-        });
+        var d = await liqAction({ action: "close", chain: chainKey, tokenId: p.tokenId, percent: 100, burn: true });
         btn.innerHTML = '<span class="spinner"></span> awaiting signature…';
         await sdk().confirmTransaction(d.txBlobs[0].blob);
         btn.textContent = "Closed ✓";
         toast("Close transaction sent for signing (" + (d.steps || []).join(" + ") + ")");
       } catch (e) {
         btn.disabled = false;
-        btn.innerHTML = 'One-Click Close <span style="opacity:.8">· $0.50</span>';
+        btn.innerHTML = 'One-Click Close <span style="opacity:.8">' + closePrice() + "</span>";
         toast(e.message || "Close failed", true);
       }
     });
@@ -619,7 +642,7 @@ $("o-go").addEventListener("click", async function () {
       slippageBps: Number($("o-slippage").value || 100),
       recipient: state.wallet || undefined,
     };
-    var d = await paidFetch(X402_LIQ_ACTION, { method: "POST", body: body, maxPaymentUsd: 0.5 });
+    var d = await liqAction(body);
     var box = $("o-result");
     box.innerHTML = '<div class="card"><h3>Mint Ready — ' + esc(d.token0.symbol) + "/" + esc(d.token1.symbol) + " " + (FEE_LABEL[d.fee] || "") + "</h3>" +
       '<div class="stats">' +
@@ -648,7 +671,7 @@ async function closeAction(action, btn, extra) {
       action: action, chain: state.chain, tokenId: tokenId,
       slippageBps: Number($("c-slippage").value || 100),
     }, extra || {});
-    var d = await paidFetch(X402_LIQ_ACTION, { method: "POST", body: body, maxPaymentUsd: 0.5 });
+    var d = await liqAction(body);
     var box = $("c-result");
     box.innerHTML = '<div class="card"><h3>' + esc(action) + " ready — #" + esc(tokenId) + "</h3>" +
       (d.steps ? '<p class="muted">' + d.steps.join(" → ") + "</p>" : "") +
@@ -669,15 +692,20 @@ $("c-collect").addEventListener("click", function (e) { closeAction("collect", e
 $("c-burn").addEventListener("click", function (e) { closeAction("burn", e.currentTarget); });
 
 /* ================= init ================= */
+function closePrice() { return isOwner() ? "· FREE" : "· $0.50"; }
 function reflectAuth() {
   var chip = $("walletChip");
   if (!state.sdk) { chip.textContent = "no SDK"; return; }
   if (state.authed && state.wallet) {
-    chip.textContent = short(state.wallet);
+    chip.textContent = short(state.wallet) + (isOwner() ? " · OWNER FREE" : "");
     chip.classList.add("ok");
     $("p-signedout").classList.add("hidden");
     $("p-main").classList.remove("hidden");
     $("p-owner").textContent = short(state.wallet);
+    if (isOwner()) {
+      document.querySelectorAll(".px").forEach(function (s) { s.textContent = "· FREE"; });
+      $("c-adv-label").textContent = "Advanced — run the steps separately (free for you)";
+    }
   } else {
     chip.textContent = "signed out";
     chip.classList.remove("ok");

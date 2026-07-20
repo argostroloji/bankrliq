@@ -217,11 +217,11 @@ try {
     const txBlobs = [];
     if (amount0Desired > BigInt(0)) {
       const data = bankr.chain.encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [cfg.npm, amount0Desired] });
-      txBlobs.push({ label: "Approve " + sym0, blob: await bankr.tx.prepare({ chain: chainKey, to: token0, data, label: "Approve " + sym0 }) });
+      txBlobs.push({ label: "Approve " + sym0, blob: await bankr.tx.prepare({ chain: chainKey, to: token0, data, label: "Approve " + sym0 }), raw: { chain: chainKey, to: token0, data, value: "0x0" } });
     }
     if (amount1Desired > BigInt(0)) {
       const data = bankr.chain.encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [cfg.npm, amount1Desired] });
-      txBlobs.push({ label: "Approve " + sym1, blob: await bankr.tx.prepare({ chain: chainKey, to: token1, data, label: "Approve " + sym1 }) });
+      txBlobs.push({ label: "Approve " + sym1, blob: await bankr.tx.prepare({ chain: chainKey, to: token1, data, label: "Approve " + sym1 }), raw: { chain: chainKey, to: token1, data, value: "0x0" } });
     }
     const mintData = bankr.chain.encodeFunctionData({
       abi: NPM_ABI, functionName: "mint",
@@ -233,7 +233,7 @@ try {
         recipient, deadline,
       }],
     });
-    txBlobs.push({ label: "Mint " + sym0 + "/" + sym1 + " LP", blob: await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data: mintData, label: "Mint LP position" }) });
+    txBlobs.push({ label: "Mint " + sym0 + "/" + sym1 + " LP", blob: await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data: mintData, label: "Mint LP position" }), raw: { chain: chainKey, to: cfg.npm, data: mintData, value: "0x0" } });
 
     const sp = Number(BigInt(slot0[0])) / Math.pow(2, 96);
     result = {
@@ -259,7 +259,7 @@ try {
       args: [{ tokenId, liquidity: liq, amount0Min, amount1Min, deadline }],
     });
     const blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label: "Decrease #" + tokenId + " (" + percent + "%)" });
-    result = { action, chain: chainKey, tokenId: tokenId.toString(), percent, liquidityRemoved: liq.toString(), txBlobs: [{ label: "Decrease liquidity #" + tokenId, blob }] };
+    result = { action, chain: chainKey, tokenId: tokenId.toString(), percent, liquidityRemoved: liq.toString(), txBlobs: [{ label: "Decrease liquidity #" + tokenId, blob, raw: { chain: chainKey, to: cfg.npm, data, value: "0x0" } }] };
 
   } else if (action === "collect") {
     const tokenId = parseTokenId(a.tokenId);
@@ -270,13 +270,13 @@ try {
       args: [{ tokenId, recipient, amount0Max: MAX_UINT128, amount1Max: MAX_UINT128 }],
     });
     const blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label: "Collect fees #" + tokenId });
-    result = { action, chain: chainKey, tokenId: tokenId.toString(), recipient, txBlobs: [{ label: "Collect fees #" + tokenId, blob }] };
+    result = { action, chain: chainKey, tokenId: tokenId.toString(), recipient, txBlobs: [{ label: "Collect fees #" + tokenId, blob, raw: { chain: chainKey, to: cfg.npm, data, value: "0x0" } }] };
 
   } else if (action === "burn") {
     const tokenId = parseTokenId(a.tokenId);
     const data = bankr.chain.encodeFunctionData({ abi: NPM_ABI, functionName: "burn", args: [tokenId] });
     const blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label: "Burn NFT #" + tokenId });
-    result = { action, chain: chainKey, tokenId: tokenId.toString(), txBlobs: [{ label: "Burn NFT #" + tokenId, blob }] };
+    result = { action, chain: chainKey, tokenId: tokenId.toString(), txBlobs: [{ label: "Burn NFT #" + tokenId, blob, raw: { chain: chainKey, to: cfg.npm, data, value: "0x0" } }] };
 
   } else if (action === "close") {
     // ONE signature: NPM.multicall(decreaseLiquidity + collect [+ burn])
@@ -315,7 +315,7 @@ try {
     result = {
       action, chain: chainKey, tokenId: tokenId.toString(), percent, burn: doBurn, steps,
       liquidityRemoved: liq.toString(),
-      txBlobs: [{ label: "Close #" + tokenId + " (" + percent + "%)", blob }],
+      txBlobs: [{ label: "Close #" + tokenId + " (" + percent + "%)", blob, raw: { chain: chainKey, to: cfg.npm, data, value: "0x0" } }],
       note: "Single signature: " + steps.join(" + ") + ".",
     };
 

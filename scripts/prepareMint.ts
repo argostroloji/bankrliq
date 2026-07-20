@@ -59,6 +59,15 @@ function alignTick(t, spacing, up) {
   return Math.min(Math.max(q * spacing, lo), hi);
 }
 
+// OWNER-ONLY: free path for the app owner's wallet. Everyone else goes through
+// the paid x402 liq-action endpoint ($0.50). ctx.caller comes from Bankr auth
+// and cannot be spoofed.
+const OWNER = "0xa2baa5527e25de10099096a3257d0b1938f095b1";
+const callerAddr = ctx && ctx.caller && ctx.caller.walletAddress;
+if (!callerAddr || callerAddr.toLowerCase() !== OWNER) {
+  return { error: "owner-only script — use the paid liq-action endpoint ($0.50)" };
+}
+
 const a = args || {};
 const chainKey = a.chain === "robinhood" ? "robinhood" : "base";
 const cfg = CHAINS[chainKey];
@@ -131,11 +140,19 @@ const deadline = BigInt(Math.floor(Date.now() / 1000) + 1200);
 const txBlobs = [];
 if (amount0Desired > BigInt(0)) {
   const data = bankr.chain.encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [cfg.npm, amount0Desired] });
-  txBlobs.push({ label: "Approve " + sym0, blob: await bankr.tx.prepare({ chain: chainKey, to: token0, data, label: "Approve " + sym0 }) });
+  txBlobs.push({
+    label: "Approve " + sym0,
+    blob: await bankr.tx.prepare({ chain: chainKey, to: token0, data, label: "Approve " + sym0 }),
+    raw: { chain: chainKey, to: token0, data, value: "0x0" },
+  });
 }
 if (amount1Desired > BigInt(0)) {
   const data = bankr.chain.encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [cfg.npm, amount1Desired] });
-  txBlobs.push({ label: "Approve " + sym1, blob: await bankr.tx.prepare({ chain: chainKey, to: token1, data, label: "Approve " + sym1 }) });
+  txBlobs.push({
+    label: "Approve " + sym1,
+    blob: await bankr.tx.prepare({ chain: chainKey, to: token1, data, label: "Approve " + sym1 }),
+    raw: { chain: chainKey, to: token1, data, value: "0x0" },
+  });
 }
 const mintData = bankr.chain.encodeFunctionData({
   abi: NPM_ABI, functionName: "mint",
@@ -144,6 +161,7 @@ const mintData = bankr.chain.encodeFunctionData({
 txBlobs.push({
   label: "Mint " + sym0 + "/" + sym1 + " LP",
   blob: await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data: mintData, label: "Mint LP position" }),
+  raw: { chain: chainKey, to: cfg.npm, data: mintData, value: "0x0" },
 });
 
 const sp = Number(BigInt(slot0[0])) / Math.pow(2, 96);
