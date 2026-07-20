@@ -1,0 +1,16 @@
+{
+  "name": "bankrliq",
+  "version": "1.0.0",
+  "description": "BANKRLIQ - Uniswap V3 LP management app for Bankr Apps (x402 monetized)",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  }
+}
