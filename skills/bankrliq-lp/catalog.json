@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "slug": "bankrliq-lp",
+  "provider": "Argostroloji",
+  "providerUrl": "https://github.com/argostroloji/bankrliq",
+  "demo": {
+    "title": "bankrliq-lp.sh",
+    "language": "bash",
+    "code": "# Find the best pools for a token\nbankr prompt \"using the bankrliq-lp skill, what are the best pools for HOPCAT?\"\n\n# Add liquidity with one token only\nbankr prompt \"using the bankrliq-lp skill, add my HOPCAT to its most used pool\"\n\n# LP both sides into a WETH/USDC pool\nbankr prompt \"using the bankrliq-lp skill, LP 50 USDC into the best WETH/USDC pool on Base\"\n\n# Harvest fees without closing\nbankr prompt \"using the bankrliq-lp skill, collect my LP fees\"\n\n# Exit everything in one signature\nbankr prompt \"using the bankrliq-lp skill, close all my liquidity positions\""
+  },
+  "setup": [
+    "Install: ask Bankr to `install the bankrliq-lp skill from https://github.com/argostroloji/bankrliq/tree/main/skills/bankrliq-lp`",
+    "Endpoint calls are paid per-use with your USDC via x402 ($0.05 discovery, $0.50 tx prep, $1.00 close-all) — no registration",
+    "Every transaction is signed by YOUR wallet; the API only prepares calldata"
+  ],
+  "install": {
+    "type": "bankr",
+    "repoPath": "skills/bankrliq-lp",
+    "command": "install the bankrliq-lp skill from https://github.com/argostroloji/bankrliq/tree/main/skills/bankrliq-lp"
+  }
+}

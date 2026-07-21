@@ -135,6 +135,16 @@ if (mode === "auto10" || mode === "auto20") {
   const d = Math.round(Math.log(1 + pct) / Math.log(1.0001));
   tickLower = alignTick(tick - d, spacing, false);
   tickUpper = alignTick(tick + d, spacing, true);
+} else if (mode === "above10" || mode === "below10") {
+  // single-sided: band entirely above (token0 only) or below (token1 only)
+  const width = Math.max(spacing, Math.ceil(953 / spacing) * spacing);
+  if (mode === "above10") {
+    tickLower = Math.floor(tick / spacing) * spacing + spacing;
+    tickUpper = tickLower + width;
+  } else {
+    tickUpper = Math.floor(tick / spacing) * spacing;
+    tickLower = tickUpper - width;
+  }
 } else if (mode === "full") {
   tickLower = Math.ceil(MIN_TICK / spacing) * spacing;
   tickUpper = Math.floor(MAX_TICK / spacing) * spacing;

@@ -68,7 +68,7 @@
             "fee": { "type": "number", "description": "mint: 100 | 500 | 3000 | 10000" },
             "amount0": { "type": "string", "description": "mint: decimal amount of token0" },
             "amount1": { "type": "string", "description": "mint: decimal amount of token1" },
-            "rangeMode": { "type": "string", "description": "mint: auto10 | auto20 | full | manual" },
+            "rangeMode": { "type": "string", "description": "mint: auto10 | auto20 | full | manual | above10 (single-sided, deposit ONLY the pool's token0 — band sits just above the current price) | below10 (single-sided, ONLY token1 — band just below)" },
             "tickLower": { "type": "number", "description": "mint (manual mode)" },
             "tickUpper": { "type": "number", "description": "mint (manual mode)" },
             "tokenId": { "type": "string", "description": "decrease/collect/burn/close: LP NFT id" },

@@ -444,8 +444,8 @@ function renderSnapshot(snap) {
       // snapshot pools are always WETH/stable — addresses are known per chain
       setOpenCtx({
         chain: state.chain, fee: sp.fee,
-        t0: { addr: c.tokens[0].addr, sym: "WETH", dec: 18 },
-        t1: { addr: c.tokens[1].addr, sym: c.stableSym, dec: 6 },
+        t0: { addr: c.weth, sym: "WETH", dec: 18 },
+        t1: { addr: c.stable, sym: c.stableSym, dec: 6 },
         price0In1: Number(sp.currentPrice), tick: null,
       });
       gotoTab("open");
@@ -615,7 +615,7 @@ $("p-closeall").addEventListener("click", function () {
   var n = livePositions().length;
   if (n < 2) return;
   $("p-closeall-msg").textContent =
-    "Are you sure? This closes ALL " + n + " positions on " + CHAINS[state.chain].name +
+    "Are you sure? This closes ALL " + n + " positions on " + CHAINS[(lastPositionsData && lastPositionsData.chain) || state.chain].name +
     " in one signature — every position's liquidity and pending fees are withdrawn to your wallet and the NFTs are burned. This cannot be undone.";
   $("p-closeall-confirm").classList.remove("hidden");
 });
@@ -781,11 +781,16 @@ function setOpenCtx(ctx) {
   $("o-fee").value = String(ctx.fee);
   var sel = $("o-simple-token");
   sel.innerHTML = "";
-  // default to the second token (usually the stable — people think in dollars)
-  [ctx.t1, ctx.t0].forEach(function (t, i) {
+  // default token priority: chain stable > WETH > token1 (people think in dollars)
+  var cc = CHAINS[ctx.chain];
+  var def = null;
+  [ctx.t0, ctx.t1].forEach(function (t) { if (!def && t.addr.toLowerCase() === cc.stable.toLowerCase()) def = t.addr; });
+  if (!def) [ctx.t0, ctx.t1].forEach(function (t) { if (!def && t.addr.toLowerCase() === cc.weth.toLowerCase()) def = t.addr; });
+  if (!def) def = ctx.t1.addr;
+  [ctx.t1, ctx.t0].forEach(function (t) {
     var o = document.createElement("option");
     o.value = t.addr; o.textContent = t.sym;
-    if (i === 0) o.selected = true;
+    if (t.addr === def) o.selected = true;
     sel.appendChild(o);
   });
   $("o-simple-amt").value = "";
