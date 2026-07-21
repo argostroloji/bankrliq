@@ -2,11 +2,35 @@
   "slug": "bankrliq",
   "title": "Bankr Liquidity Manager",
   "description": "Uniswap V3 likidite havuz keşfi, pozisyon açma/kapatma ve izleme — Base + Robinhood Chain",
-  "permissions": ["read:wallet", "read:chain", "read:appdata", "write:appdata", "fetch:http", "prepare:transaction"],
+  "permissions": [
+    "read:wallet",
+    "read:chain",
+    "read:appdata",
+    "write:appdata",
+    "fetch:http",
+    "prepare:transaction"
+  ],
   "frontendIdentity": "viewer",
-  "scripts": ["getPools", "getPositions", "getBalances", "prepareMint", "prepareDecrease", "prepareCollect", "prepareBurn", "prepareClose", "prepareCloseAll", "findPools"],
-  "publicDataKeys": ["pools_snapshot_base", "pools_snapshot_robinhood"],
-  "publicScripts": ["getPools"],
+  "scripts": [
+    "getPools",
+    "getPositions",
+    "getBalances",
+    "prepareMint",
+    "prepareDecrease",
+    "prepareCollect",
+    "prepareBurn",
+    "prepareClose",
+    "prepareCloseAll",
+    "findPools",
+    "getAllowance"
+  ],
+  "publicDataKeys": [
+    "pools_snapshot_base",
+    "pools_snapshot_robinhood"
+  ],
+  "publicScripts": [
+    "getPools"
+  ],
   "publicScriptLimits": [
     {
       "name": "getPools",
@@ -14,8 +38,13 @@
         "maxChainReads": 10,
         "maxExecMs": 5000,
         "maxReturnBytes": 8192,
-        "perViewerRateLimit": { "rpm": 10, "rph": 100 },
-        "perAppRateLimit": { "rph": 1000 }
+        "perViewerRateLimit": {
+          "rpm": 10,
+          "rph": 100
+        },
+        "perAppRateLimit": {
+          "rph": 1000
+        }
       }
     }
   ],
@@ -24,7 +53,10 @@
       "name": "pools_snapshot_base",
       "schema": {
         "type": "object",
-        "required": ["pools", "updatedAt"],
+        "required": [
+          "pools",
+          "updatedAt"
+        ],
         "properties": [
           {
             "name": "pools",
@@ -32,19 +64,61 @@
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["pair", "fee", "tvl", "volume24h", "apr", "currentPrice"],
+                "required": [
+                  "pair",
+                  "fee",
+                  "tvl",
+                  "volume24h",
+                  "apr",
+                  "currentPrice"
+                ],
                 "properties": [
-                  { "name": "pair", "schema": { "type": "string" } },
-                  { "name": "fee", "schema": { "type": "number" } },
-                  { "name": "tvl", "schema": { "type": "number" } },
-                  { "name": "volume24h", "schema": { "type": "number" } },
-                  { "name": "apr", "schema": { "type": "number" } },
-                  { "name": "currentPrice", "schema": { "type": "string" } }
+                  {
+                    "name": "pair",
+                    "schema": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "name": "fee",
+                    "schema": {
+                      "type": "number"
+                    }
+                  },
+                  {
+                    "name": "tvl",
+                    "schema": {
+                      "type": "number"
+                    }
+                  },
+                  {
+                    "name": "volume24h",
+                    "schema": {
+                      "type": "number"
+                    }
+                  },
+                  {
+                    "name": "apr",
+                    "schema": {
+                      "type": "number"
+                    }
+                  },
+                  {
+                    "name": "currentPrice",
+                    "schema": {
+                      "type": "string"
+                    }
+                  }
                 ]
               }
             }
           },
-          { "name": "updatedAt", "schema": { "type": "number" } }
+          {
+            "name": "updatedAt",
+            "schema": {
+              "type": "number"
+            }
+          }
         ]
       }
     },
@@ -52,7 +126,10 @@
       "name": "pools_snapshot_robinhood",
       "schema": {
         "type": "object",
-        "required": ["pools", "updatedAt"],
+        "required": [
+          "pools",
+          "updatedAt"
+        ],
         "properties": [
           {
             "name": "pools",
@@ -60,19 +137,61 @@
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["pair", "fee", "tvl", "volume24h", "apr", "currentPrice"],
+                "required": [
+                  "pair",
+                  "fee",
+                  "tvl",
+                  "volume24h",
+                  "apr",
+                  "currentPrice"
+                ],
                 "properties": [
-                  { "name": "pair", "schema": { "type": "string" } },
-                  { "name": "fee", "schema": { "type": "number" } },
-                  { "name": "tvl", "schema": { "type": "number" } },
-                  { "name": "volume24h", "schema": { "type": "number" } },
-                  { "name": "apr", "schema": { "type": "number" } },
-                  { "name": "currentPrice", "schema": { "type": "string" } }
+                  {
+                    "name": "pair",
+                    "schema": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "name": "fee",
+                    "schema": {
+                      "type": "number"
+                    }
+                  },
+                  {
+                    "name": "tvl",
+                    "schema": {
+                      "type": "number"
+                    }
+                  },
+                  {
+                    "name": "volume24h",
+                    "schema": {
+                      "type": "number"
+                    }
+                  },
+                  {
+                    "name": "apr",
+                    "schema": {
+                      "type": "number"
+                    }
+                  },
+                  {
+                    "name": "currentPrice",
+                    "schema": {
+                      "type": "string"
+                    }
+                  }
                 ]
               }
             }
           },
-          { "name": "updatedAt", "schema": { "type": "number" } }
+          {
+            "name": "updatedAt",
+            "schema": {
+              "type": "number"
+            }
+          }
         ]
       }
     }

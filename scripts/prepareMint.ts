@@ -174,9 +174,15 @@ if (mode === "auto10" || mode === "auto20") {
   tickLower = Math.ceil(MIN_TICK / spacing) * spacing;
   tickUpper = Math.floor(MAX_TICK / spacing) * spacing;
 } else {
-  tickLower = alignTick(Number(a.tickLower), spacing, false);
-  tickUpper = alignTick(Number(a.tickUpper), spacing, true);
-  if (!Number.isFinite(tickLower) || !Number.isFinite(tickUpper)) return { error: "manual mode requires tickLower and tickUpper" };
+  const rawLo = Number(a.tickLower), rawHi = Number(a.tickUpper);
+  if (!Number.isFinite(rawLo) || !Number.isFinite(rawHi)) return { error: "manual mode requires tickLower and tickUpper" };
+  // clamping silently would turn an out-of-range range into "tickLower must be
+  // < tickUpper", which points at the wrong thing — say what is actually wrong
+  if (Math.abs(rawLo) > MAX_TICK || Math.abs(rawHi) > MAX_TICK) {
+    return { error: "tick range " + rawLo + " to " + rawHi + " is outside Uniswap's limits (-887272 to 887272)" };
+  }
+  tickLower = alignTick(rawLo, spacing, false);
+  tickUpper = alignTick(rawHi, spacing, true);
 }
 if (tickLower >= tickUpper) return { error: "tickLower must be < tickUpper" };
 
@@ -225,28 +231,32 @@ if (short.length) {
 const txBlobs = [];
 // only ask for an approval when the existing allowance is actually short —
 // every extra signature is another chance for the user to drop the sequence
+const approvals = [];
 if (amount0Desired > BigInt(0) && w0.allow < amount0Desired) {
   const data = await __enc({ abi: ERC20_ABI, functionName: "approve", args: [cfg.npm, amount0Desired] });
-  txBlobs.push({
-    label: "Approve " + sym0,
+  approvals.push({
+    label: "Approve " + sym0, kind: "approve",
+    token: token0, symbol: sym0, need: amount0Desired.toString(),
     blob: await softPrepare(token0, data, "Approve " + sym0),
     raw: { chain: chainKey, to: token0, data, value: "0" },
   });
 }
 if (amount1Desired > BigInt(0) && w1.allow < amount1Desired) {
   const data = await __enc({ abi: ERC20_ABI, functionName: "approve", args: [cfg.npm, amount1Desired] });
-  txBlobs.push({
-    label: "Approve " + sym1,
+  approvals.push({
+    label: "Approve " + sym1, kind: "approve",
+    token: token1, symbol: sym1, need: amount1Desired.toString(),
     blob: await softPrepare(token1, data, "Approve " + sym1),
     raw: { chain: chainKey, to: token1, data, value: "0" },
   });
 }
+for (const ap of approvals) txBlobs.push(ap);
 const mintData = await __enc({
   abi: NPM_ABI, functionName: "mint",
   args: [{ token0, token1, fee, tickLower, tickUpper, amount0Desired, amount1Desired, amount0Min, amount1Min, recipient, deadline }],
 });
 txBlobs.push({
-  label: "Mint " + sym0 + "/" + sym1 + " LP",
+  label: "Mint " + sym0 + "/" + sym1 + " LP", kind: "action",
   blob: await softPrepare(cfg.npm, mintData, "Mint LP position"),
   raw: { chain: chainKey, to: cfg.npm, data: mintData, value: "0" },
 });
@@ -263,5 +273,9 @@ return {
   amount0Desired: amount0Desired.toString(),
   amount1Desired: amount1Desired.toString(),
   txBlobs,
+  // the frontend gates the mint on these actually landing on-chain rather than
+  // trusting an agent to broadcast a multi-step message in order
+  approvalsNeeded: approvals.map((x) => ({ token: x.token, symbol: x.symbol, need: x.need })),
+  spender: cfg.npm,
   note: "Sign in order: approvals first, then mint.",
 };

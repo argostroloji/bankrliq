@@ -241,7 +241,7 @@
   <p class="muted" style="text-align:center; margin-top:16px">
     The app never holds private keys — every transaction is signed in your wallet via Bankr.
     Free for everyone — discovery, tracking and every transaction. You only pay network gas.
-    <br><span class="muted" style="opacity:.6">build b7 · balance preflight + ordered signing</span>
+    <br><span class="muted" style="opacity:.6">build b8 · approval gating on-chain</span>
   </p>
 </div>
 
@@ -315,7 +315,7 @@ function sdk() {
 /* Stamped into the chat handoff so a failure report always identifies which
    frontend built it — a stale cached iframe is otherwise indistinguishable
    from a real bug. */
-var BUILD = "b7";
+var BUILD = "b8";
 function chainName(c) { return c === "robinhood" ? "Robinhood Chain" : "Base"; }
 async function runScript(name, a) {
   var r = await sdk().invokeScript(name, a || {});
@@ -372,10 +372,41 @@ async function signAll(entries, whatFor) {
   if (typeof b.prefillChat === "function") { b.prefillChat(msg); return; }
   throw new Error("no signing path available");
 }
+function sleep(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
+/* Poll the chain instead of trusting that the approval was broadcast first.
+   Counts iterations rather than wall-clock: Date.now() is frozen inside this
+   iframe, so any deadline computed from it never expires. */
+async function waitForApprovals(chain, spender, needs) {
+  var tokens = needs.map(function (n) { return n.token; });
+  for (var i = 0; i < 60; i++) {
+    await sleep(5000);
+    try {
+      var r = await runScript("getAllowance", { chain: chain, spender: spender, tokens: tokens });
+      var ok = needs.every(function (n) {
+        var t = (r.tokens || []).find(function (x) { return x.token.toLowerCase() === n.token.toLowerCase(); });
+        return t && t.allowance != null && BigInt(t.allowance) >= BigInt(n.need);
+      });
+      if (ok) return true;
+    } catch (e) { /* transient read failure — keep polling */ }
+  }
+  return false;
+}
 async function prepareAndSign(scriptName, a, whatFor) {
   var r = await runScript(scriptName, a);
   if (!r || !r.txBlobs || !r.txBlobs.length) throw new Error("no transaction returned");
-  await signAll(r.txBlobs, whatFor || scriptName);
+  var approvals = r.txBlobs.filter(function (e) { return e.kind === "approve"; });
+  var actions = r.txBlobs.filter(function (e) { return e.kind !== "approve"; });
+  if (approvals.length && actions.length && r.spender && (r.approvalsNeeded || []).length) {
+    await signAll(approvals, "token approval needed before " + (whatFor || scriptName));
+    toast("Approval sent — waiting for it to confirm on-chain before the next step");
+    var ok = await waitForApprovals(a.chain || state.chain, r.spender, r.approvalsNeeded);
+    if (!ok) {
+      throw new Error("The approval has not confirmed yet. Once it does, press the button again — " +
+        "it will skip the approval and send only the remaining step.");
+    }
+    toast("Approval confirmed — sending the next step");
+  }
+  await signAll(actions.length ? actions : r.txBlobs, whatFor || scriptName);
   return r;
 }
 
