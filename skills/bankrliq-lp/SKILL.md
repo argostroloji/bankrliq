@@ -78,6 +78,15 @@ Enumerate the user's LP NFTs on-chain first (read-only):
 - Close SEVERAL/ALL: close-all `{ chain, tokenIds: [...], recipient: <user
   wallet> }` — ALL positions in ONE signature; cheaper than N separate closes.
 
+## Payment handling
+
+These endpoints are x402-protected: an unpaid request returns HTTP 402
+"Payment Required" with payment requirements in the body. That is NOT an
+error — execute the x402 payment flow (you have pay:x402 capability) and
+retry the same request with the payment attached. Do NOT fall back to
+hand-rolling raw contract calls; the endpoints exist precisely so you never
+have to construct Uniswap calldata yourself.
+
 ## Safety rules
 
 - ALWAYS show the user what you found (pool, TVL, volume, APR, range) and what
