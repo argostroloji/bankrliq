@@ -78,6 +78,13 @@ Enumerate the user's LP NFTs on-chain first (read-only):
 - Close SEVERAL/ALL: close-all `{ chain, tokenIds: [...], recipient: <user
   wallet> }` — ALL positions in ONE signature; cheaper than N separate closes.
 
+## Request format
+
+If your x402 call tool takes the request body as a STRING parameter,
+JSON-stringify the payload first (e.g. body: "{\"action\":\"close\",...}").
+Passing a raw object fails tool validation with "expected string, received
+object" before the request is even sent.
+
 ## Payment handling
 
 These endpoints are x402-protected: an unpaid request returns HTTP 402
