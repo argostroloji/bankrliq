@@ -3,7 +3,7 @@
   "currency": "USDC",
   "services": {
     "bankrliq-pool-finder": {
-      "price": "0.05",
+      "price": "0",
       "description": "Uniswap V3 pool finder for Base and Robinhood Chain. Pass token0+token1 for an exact pair, only token0 for a CA search (pairs it with WETH + the chain stable), or nothing for WETH/stable defaults. Returns pools with live TVL, 24h volume sampled from Swap logs, fees and APR estimates. Used by the Bankr Liquidity Manager app; agent-friendly.",
       "methods": ["GET", "POST"],
       "scheme": "exact",
@@ -27,7 +27,7 @@
       }
     },
     "bankrliq-close-all": {
-      "price": "1.00",
+      "price": "0",
       "description": "Close MULTIPLE Uniswap V3 LP positions in ONE transaction (Base + Robinhood Chain). Every position's decreaseLiquidity + collect + burn is packed into a single NonfungiblePositionManager.multicall, so the wallet signs exactly once. Returns txBlobs with raw {chain,to,data,value} calldata; nothing is signed server-side. Used by the Bankr Liquidity Manager app.",
       "methods": ["POST"],
       "scheme": "exact",
@@ -53,7 +53,7 @@
       }
     },
     "bankrliq-liq-action": {
-      "price": "0.50",
+      "price": "0",
       "description": "Uniswap V3 LP transaction preparer for Base and Robinhood Chain. Actions: mint (approvals + mint, sign in order), decrease, collect, burn, close (decreaseLiquidity + collect [+ burn] as ONE multicall = one signature). Returns txBlobs: [{label, blob, raw}] — 'raw' is {chain,to,data,value} calldata any agent can sign with its own wallet. Nothing is signed server-side. Used by the Bankr Liquidity Manager app.",
       "methods": ["POST"],
       "scheme": "exact",

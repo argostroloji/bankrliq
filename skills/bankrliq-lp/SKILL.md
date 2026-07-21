@@ -16,13 +16,22 @@ Uniswap V3 liquidity management through three paid x402 endpoints. You pay per
 call with the user's USDC (tiny, fixed prices below), get JSON back, and sign
 transactions with the user's wallet.
 
-## Endpoints (x402, network base, USDC)
+## Endpoints — ALL FREE ($0, no payment needed)
 
-| Endpoint | Price | What |
-|---|---|---|
-| `POST https://x402.bankr.bot/0xa2baa5527e25de10099096a3257d0b1938f095b1/bankrliq-pool-finder` | $0.05 | Find pools with live TVL, 24h volume, APR |
-| `POST https://x402.bankr.bot/0xa2baa5527e25de10099096a3257d0b1938f095b1/bankrliq-liq-action` | $0.50 | Prepare mint / decrease / collect / burn / close calldata |
-| `POST https://x402.bankr.bot/0xa2baa5527e25de10099096a3257d0b1938f095b1/bankrliq-close-all` | $1.00 | Close MANY positions in ONE signature |
+| Endpoint | What |
+|---|---|
+| `POST https://x402.bankr.bot/0xa2baa5527e25de10099096a3257d0b1938f095b1/bankrliq-pool-finder` | Find pools with live TVL, 24h volume, APR |
+| `POST https://x402.bankr.bot/0xa2baa5527e25de10099096a3257d0b1938f095b1/bankrliq-liq-action` | Prepare mint / decrease / collect / burn / close calldata |
+| `POST https://x402.bankr.bot/0xa2baa5527e25de10099096a3257d0b1938f095b1/bankrliq-close-all` | Close MANY positions in ONE signature |
+
+## CRITICAL: always use these endpoints to build LP calldata
+
+Do NOT hand-encode Uniswap V3 calls yourself. `decreaseLiquidity`, `collect`,
+`mint` and `burn` take struct/tuple parameters that are easy to mis-encode, and
+`decreaseLiquidity` additionally enforces `block.timestamp <= deadline` — a
+stale deadline reverts every time. These endpoints produce correct, current
+calldata for you. Take `txBlobs[i].raw` = `{ chain, to, data, value }` and
+broadcast it AS-IS from the user's wallet, in order, without re-encoding.
 
 Every transaction-preparing response contains `txBlobs: [{ label, blob, raw }]`.
 Use `raw` = `{ chain, to, data, value }` — sign and submit each entry IN ORDER
@@ -84,15 +93,6 @@ If your x402 call tool takes the request body as a STRING parameter,
 JSON-stringify the payload first (e.g. body: "{\"action\":\"close\",...}").
 Passing a raw object fails tool validation with "expected string, received
 object" before the request is even sent.
-
-## Payment handling
-
-These endpoints are x402-protected: an unpaid request returns HTTP 402
-"Payment Required" with payment requirements in the body. That is NOT an
-error — execute the x402 payment flow (you have pay:x402 capability) and
-retry the same request with the payment attached. Do NOT fall back to
-hand-rolling raw contract calls; the endpoints exist precisely so you never
-have to construct Uniswap calldata yourself.
 
 ## Safety rules
 
