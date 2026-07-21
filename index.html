@@ -331,23 +331,29 @@ function isOwner() {
   return !!(state.wallet && state.wallet.toLowerCase() === OWNER);
 }
 /* Owner rides free via invokeScript twins; everyone else pays via x402. */
+/* Owner rides the free invokeScript twin, but the app-script sandbox can
+   reject a call as a "privileged operation". When the free path throws, fall
+   back to the proven paid x402 endpoint (payment goes to the owner's own
+   payout wallet, so it round-trips ~net-zero) — so the action always works. */
+async function ownerOrPaid(scriptName, body, url, maxUsd) {
+  if (isOwner()) {
+    try {
+      var r = await sdk().invokeScript(scriptName, body);
+      if (r && r.error) throw new Error(r.error);
+      return r;
+    } catch (e) {
+      toast("Free path unavailable — routing via x402…");
+    }
+  }
+  return paidFetch(url, { method: "POST", body: body, maxPaymentUsd: maxUsd });
+}
 async function liqAction(body) {
   if (!body.recipient && state.wallet) body.recipient = state.wallet; // paid endpoint requires it
-  if (isOwner()) {
-    var map = { mint: "prepareMint", decrease: "prepareDecrease", collect: "prepareCollect", burn: "prepareBurn", close: "prepareClose" };
-    var r = await sdk().invokeScript(map[body.action], body);
-    if (r && r.error) throw new Error(r.error);
-    return r;
-  }
-  return paidFetch(X402_LIQ_ACTION, { method: "POST", body: body, maxPaymentUsd: 0.5 });
+  var map = { mint: "prepareMint", decrease: "prepareDecrease", collect: "prepareCollect", burn: "prepareBurn", close: "prepareClose" };
+  return ownerOrPaid(map[body.action], body, X402_LIQ_ACTION, 0.5);
 }
 async function deepSearch(q) {
-  if (isOwner()) {
-    var r = await sdk().invokeScript("findPools", q);
-    if (r && r.error) throw new Error(r.error);
-    return r;
-  }
-  return paidFetch(X402_POOL_FINDER, { method: "POST", body: q, maxPaymentUsd: 0.05 });
+  return ownerOrPaid("findPools", q, X402_POOL_FINDER, 0.05);
 }
 
 /* sequential tx-blob signing UI */
@@ -666,13 +672,7 @@ $("p-closeall-yes").addEventListener("click", async function (ev) {
   btn.innerHTML = '<span class="spinner"></span> preparing…';
   try {
     var body = { chain: d.chain, tokenIds: ids, recipient: d.owner };
-    var r;
-    if (isOwner()) {
-      r = await sdk().invokeScript("prepareCloseAll", body);
-      if (r && r.error) throw new Error(r.error);
-    } else {
-      r = await paidFetch(X402_CLOSE_ALL, { method: "POST", body: body, maxPaymentUsd: 1.0 });
-    }
+    var r = await ownerOrPaid("prepareCloseAll", body, X402_CLOSE_ALL, 1.0);
     btn.innerHTML = '<span class="spinner"></span> awaiting signature…';
     await sdk().confirmTransaction(r.txBlobs[0].blob);
     btn.textContent = "All closed ✓";
