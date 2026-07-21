@@ -430,16 +430,28 @@ function poolCardHtml(p, extras) {
 function renderSnapshot(snap) {
   var box = $("d-results");
   var stale = Date.now() - snap.updatedAt > STALE_MS;
-  var head = '<div class="muted" style="margin-top:6px">Snapshot ' + new Date(snap.updatedAt).toLocaleTimeString() +
+  box.innerHTML = '<div class="muted" style="margin-top:6px">Snapshot ' + new Date(snap.updatedAt).toLocaleTimeString() +
     (stale ? ' <span class="badge stale">STALE</span>' : "") + "</div>";
-  box.innerHTML = head + snap.pools.map(function (sp) {
-    return '<div class="pool">' + poolCardHtml({
+  var c = CHAINS[state.chain];
+  snap.pools.forEach(function (sp) {
+    var el = document.createElement("div");
+    el.className = "pool";
+    el.innerHTML = poolCardHtml({
       pairLabel: sp.pair, fee: sp.fee, tvlUsd: sp.tvl,
       vol24hUsd: sp.volume24h > 0 ? sp.volume24h : null,
       aprEst: sp.apr > 0 ? sp.apr : null,
-      priceLabel: "1 WETH = <b>" + esc(sp.currentPrice) + "</b> " + esc(CHAINS[state.chain].stableSym),
-    }) + "</div>";
-  }).join("");
+      priceLabel: "1 WETH = <b>" + esc(sp.currentPrice) + "</b> " + esc(c.stableSym),
+    }, { openBtn: true });
+    el.querySelector("[data-open]").addEventListener("click", function () {
+      // snapshot pools are always WETH/stable — addresses are known per chain
+      $("o-token0").value = c.tokens[0].addr;
+      $("o-token1").value = c.tokens[1].addr;
+      $("o-fee").value = String(sp.fee);
+      gotoTab("open");
+      toast(sp.pair + " " + (FEE_LABEL[sp.fee] || "") + " selected");
+    });
+    box.appendChild(el);
+  });
 }
 
 /* Run getPools and render its RETURN value — works even when appKV writes
