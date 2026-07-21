@@ -356,6 +356,89 @@ async function deepSearch(q) {
   return ownerOrPaid("findPools", q, X402_POOL_FINDER, 0.05);
 }
 
+/* ---- Owner FREE path: build NPM calldata in the browser (pure JS, no server
+   script, no x402) and hand a raw tx to confirmTransaction. Bankr gates
+   tx.prepare behind payment, but a hand-built blob costs nothing. All inputs
+   (tokenId, liquidity) are already loaded in the position card. ---- */
+var NPM_ADDR = { base: "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1", robinhood: "0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3" };
+var SELC = { decrease: "0c49ccbe", collect: "fc6f7865", burn: "42966c68", multicall: "ac9650d8" };
+var MAXU128 = (BigInt(1) << BigInt(128)) - BigInt(1);
+function w256(v) { var b = BigInt(v); if (b < BigInt(0)) b = (BigInt(1) << BigInt(256)) + b; return b.toString(16).padStart(64, "0"); }
+function wAddr(a) { return String(a).toLowerCase().replace(/^0x/, "").padStart(64, "0"); }
+function encCollectC(tokenId, recipient) { return SELC.collect + w256(tokenId) + wAddr(recipient) + w256(MAXU128) + w256(MAXU128); }
+function encDecreaseC(tokenId, liq, deadline) { return SELC.decrease + w256(tokenId) + w256(liq) + w256(0) + w256(0) + w256(deadline); }
+function encBurnC(tokenId) { return SELC.burn + w256(tokenId); }
+function encMulticallC(calls) {
+  var els = calls.map(function (c) { return c.replace(/^0x/, ""); });
+  var offs = [], bodies = [], cur = els.length * 32;
+  els.forEach(function (e) { offs.push(cur); var len = e.length / 2; var pad = e + new Array(Math.ceil(len / 32) * 64 - e.length + 1).join("0"); bodies.push(w256(len) + pad); cur += 32 + pad.length / 2; });
+  return SELC.multicall + w256(32) + w256(els.length) + offs.map(w256).join("") + bodies.join("");
+}
+function rawTx(chain, data) { return { chain: chain, chainId: chain === "robinhood" ? 4663 : 8453, to: NPM_ADDR[chain], data: "0x" + data, value: "0x0" }; }
+function ownerCollectTx(chain, tokenId) { return rawTx(chain, encCollectC(tokenId, state.wallet)); }
+function ownerCloseTx(chain, tokenId, liquidity, percent, burn) {
+  var liq = (BigInt(liquidity || 0) * BigInt(Math.round(percent * 100))) / BigInt(10000);
+  var dl = BigInt(Math.floor(Date.now() / 1000) + 1200);
+  var calls = [];
+  if (liq > BigInt(0)) calls.push(encDecreaseC(tokenId, liq, dl));
+  calls.push(encCollectC(tokenId, state.wallet));
+  if (burn && percent === 100) calls.push(encBurnC(tokenId));
+  return rawTx(chain, encMulticallC(calls));
+}
+function ownerCloseAllTx(chain, positions) {
+  var dl = BigInt(Math.floor(Date.now() / 1000) + 1200);
+  var calls = [];
+  positions.forEach(function (p) {
+    var liq = BigInt(p.liquidity || 0);
+    if (liq > BigInt(0)) calls.push(encDecreaseC(p.tokenId, liq, dl));
+    calls.push(encCollectC(p.tokenId, state.wallet));
+    calls.push(encBurnC(p.tokenId));
+  });
+  return rawTx(chain, encMulticallC(calls));
+}
+/* owner: sign the locally-built tx (free); everyone else: pay x402 then sign */
+async function signPositionAction(localTxFactory, paidBody) {
+  if (isOwner()) {
+    return sdk().confirmTransaction(localTxFactory());
+  }
+  var d = await liqAction(paidBody);
+  return sdk().confirmTransaction(d.txBlobs[0].blob);
+}
+
+/* mint calldata, client-side (owner free path) */
+var SEL_MINT = "88316456", SEL_APPROVE = "095ea7b3";
+function parseUnitsC(s, dec) {
+  s = String(s == null ? "0" : s).trim(); if (s === "") s = "0";
+  if (/e/i.test(s)) s = Number(s).toFixed(dec);
+  if (!/^\d+(\.\d+)?$/.test(s)) throw new Error("invalid amount");
+  var parts = s.split("."), frac = ((parts[1] || "") + new Array(dec + 1).join("0")).slice(0, dec);
+  return BigInt(parts[0] + frac);
+}
+function encApproveC(amount) { return SEL_APPROVE + wAddr(NPM_ADDR[state.openCtx.chain]) + w256(amount); }
+function encMintC(t0, t1, fee, tickLower, tickUpper, a0, a1, recipient, deadline) {
+  return SEL_MINT + wAddr(t0) + wAddr(t1) + w256(fee) + w256(tickLower) + w256(tickUpper) +
+    w256(a0) + w256(a1) + w256(0) + w256(0) + wAddr(recipient) + w256(deadline);
+}
+/* returns [{label, blob, raw}] for the owner, matching the paid endpoint shape */
+function ownerMintBlobs() {
+  var ctx = state.openCtx;
+  var t = ticksForMode();
+  if (!t) throw new Error("pick a valid range");
+  var a0 = parseUnitsC($("o-amount0").value || "0", ctx.t0.dec);
+  var a1 = parseUnitsC($("o-amount1").value || "0", ctx.t1.dec);
+  if (a0 === BigInt(0) && a1 === BigInt(0)) throw new Error("enter an amount");
+  var dl = BigInt(Math.floor(Date.now() / 1000) + 1200);
+  var chain = ctx.chain, blobs = [];
+  if (a0 > BigInt(0)) blobs.push(txWrap(chain, ctx.t0.addr, encApproveC(a0), "Approve " + ctx.t0.sym));
+  if (a1 > BigInt(0)) blobs.push(txWrap(chain, ctx.t1.addr, encApproveC(a1), "Approve " + ctx.t1.sym));
+  blobs.push(txWrap(chain, NPM_ADDR[chain], encMintC(ctx.t0.addr, ctx.t1.addr, ctx.fee, t.lo, t.hi, a0, a1, state.wallet, dl), "Mint " + ctx.t0.sym + "/" + ctx.t1.sym + " LP"));
+  return blobs;
+}
+function txWrap(chain, to, data, label) {
+  var raw = { chain: chain, chainId: chain === "robinhood" ? 4663 : 8453, to: to, data: "0x" + data, value: "0x0" };
+  return { label: label, blob: raw, raw: raw };
+}
+
 /* sequential tx-blob signing UI */
 function txListHtml(txBlobs) {
   return txBlobs.map(function (t, i) {
@@ -671,13 +754,16 @@ $("p-closeall-yes").addEventListener("click", async function (ev) {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> preparing…';
   try {
-    var body = { chain: d.chain, tokenIds: ids, recipient: d.owner };
-    var r = await ownerOrPaid("prepareCloseAll", body, X402_CLOSE_ALL, 1.0);
     btn.innerHTML = '<span class="spinner"></span> awaiting signature…';
-    await sdk().confirmTransaction(r.txBlobs[0].blob);
+    if (isOwner()) {
+      await sdk().confirmTransaction(ownerCloseAllTx(d.chain, livePositions()));
+    } else {
+      var body = { chain: d.chain, tokenIds: ids, recipient: d.owner };
+      var r = await paidFetch(X402_CLOSE_ALL, { method: "POST", body: body, maxPaymentUsd: 1.0 });
+      await sdk().confirmTransaction(r.txBlobs[0].blob);
+    }
     btn.textContent = "All closed ✓";
-    var skippedNote = r.skipped && r.skipped.length ? " (" + r.skipped.length + " skipped)" : "";
-    toast("Close-all transaction sent for signing — " + (r.closed ? r.closed.length : ids.length) + " positions in one signature" + skippedNote);
+    toast("Close-all sent to your wallet — " + ids.length + " positions in one signature");
   } catch (e) {
     btn.disabled = false;
     btn.textContent = "Yes, close everything";
@@ -744,11 +830,12 @@ function renderPositions(data) {
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> preparing…';
       try {
-        var d = await liqAction({ action: "close", chain: chainKey, tokenId: p.tokenId, percent: 100, burn: true });
-        btn.innerHTML = '<span class="spinner"></span> awaiting signature…';
-        await sdk().confirmTransaction(d.txBlobs[0].blob);
+        await signPositionAction(
+          function () { return ownerCloseTx(chainKey, p.tokenId, p.liquidity, 100, true); },
+          { action: "close", chain: chainKey, tokenId: p.tokenId, percent: 100, burn: true }
+        );
         btn.textContent = "Closed ✓";
-        toast("Close transaction sent for signing (" + (d.steps || []).join(" + ") + ")");
+        toast("Close transaction sent to your wallet for signing");
       } catch (e) {
         btn.disabled = false;
         btn.innerHTML = 'One-Click Close <span style="opacity:.8">' + closePrice() + "</span>";
@@ -760,11 +847,12 @@ function renderPositions(data) {
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> preparing…';
       try {
-        var d = await liqAction({ action: "collect", chain: chainKey, tokenId: p.tokenId });
-        btn.innerHTML = '<span class="spinner"></span> awaiting signature…';
-        await sdk().confirmTransaction(d.txBlobs[0].blob);
+        await signPositionAction(
+          function () { return ownerCollectTx(chainKey, p.tokenId); },
+          { action: "collect", chain: chainKey, tokenId: p.tokenId }
+        );
         btn.textContent = "Fees collected ✓";
-        toast("Collect transaction sent for signing — fees go to your wallet, the position stays open");
+        toast("Collect sent to your wallet — fees go to you, the position stays open");
       } catch (e) {
         btn.disabled = false;
         btn.innerHTML = 'Collect fees <span style="opacity:.8">' + closePrice() + "</span>";
@@ -788,11 +876,12 @@ function renderPositions(data) {
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> preparing…';
       try {
-        var d = await liqAction({ action: "close", chain: chainKey, tokenId: p.tokenId, percent: pct, burn: false });
-        btn.innerHTML = '<span class="spinner"></span> awaiting signature…';
-        await sdk().confirmTransaction(d.txBlobs[0].blob);
+        await signPositionAction(
+          function () { return ownerCloseTx(chainKey, p.tokenId, p.liquidity, pct, false); },
+          { action: "close", chain: chainKey, tokenId: p.tokenId, percent: pct, burn: false }
+        );
         btn.innerHTML = "Closed " + pct + "% ✓";
-        toast("Partial close sent for signing (" + (d.steps || []).join(" + ") + ")");
+        toast("Partial close sent to your wallet for signing");
       } catch (e) {
         btn.disabled = false;
         btn.innerHTML = "Close " + pct + '% <span style="opacity:.8">' + closePrice() + "</span>";
@@ -907,30 +996,31 @@ $("o-max").addEventListener("click", function () {
   $("o-simple-amt").value = b;
   syncSimple();
 });
+/* current-range ticks for the selected mode (client-side, no chain read) */
+function ticksForMode() {
+  var ctx = state.openCtx;
+  if (!ctx) return null;
+  var praw = ctx.price0In1 * Math.pow(10, ctx.t1.dec - ctx.t0.dec);
+  var tick = ctx.tick != null ? ctx.tick : Math.round(Math.log(praw) / Math.log(1.0001));
+  var spacing = TICKSP[ctx.fee] || 60;
+  if (rangeMode === "auto10" || rangeMode === "auto20") {
+    var d = Math.round(Math.log(rangeMode === "auto10" ? 1.10 : 1.20) / Math.log(1.0001));
+    return { lo: Math.floor((tick - d) / spacing) * spacing, hi: Math.ceil((tick + d) / spacing) * spacing };
+  }
+  if (rangeMode === "only0" || rangeMode === "only1") return singleTicks(rangeMode === "only0" ? 0 : 1);
+  if (rangeMode === "full") return { lo: Math.ceil(-887272 / spacing) * spacing, hi: Math.floor(887272 / spacing) * spacing };
+  var lo = Number($("o-ticklower").value), hi = Number($("o-tickupper").value);
+  if (!isFinite(lo) || !isFinite(hi) || lo >= hi) return null;
+  return { lo: lo, hi: hi };
+}
 /* Given one side's human amount, compute the other side from price + range. */
 function computePair(provideIs0, amt) {
   var ctx = state.openCtx;
   if (!ctx || !(amt > 0)) return null;
   var praw = ctx.price0In1 * Math.pow(10, ctx.t1.dec - ctx.t0.dec);
-  var tick = ctx.tick != null ? ctx.tick : Math.round(Math.log(praw) / Math.log(1.0001));
-  var spacing = TICKSP[ctx.fee] || 60;
-  var lo, hi;
-  if (rangeMode === "auto10" || rangeMode === "auto20") {
-    var d = Math.round(Math.log(rangeMode === "auto10" ? 1.10 : 1.20) / Math.log(1.0001));
-    lo = Math.floor((tick - d) / spacing) * spacing;
-    hi = Math.ceil((tick + d) / spacing) * spacing;
-  } else if (rangeMode === "only0" || rangeMode === "only1") {
-    var st = singleTicks(rangeMode === "only0" ? 0 : 1);
-    if (!st) return null;
-    lo = st.lo; hi = st.hi;
-  } else if (rangeMode === "full") {
-    lo = Math.ceil(-887272 / spacing) * spacing;
-    hi = Math.floor(887272 / spacing) * spacing;
-  } else {
-    lo = Number($("o-ticklower").value);
-    hi = Number($("o-tickupper").value);
-    if (!isFinite(lo) || !isFinite(hi) || lo >= hi) return null;
-  }
+  var t = ticksForMode();
+  if (!t) return null;
+  var lo = t.lo, hi = t.hi;
   var sp_ = Math.sqrt(praw);
   var sa = Math.pow(1.0001, lo / 2), sb = Math.pow(1.0001, hi / 2);
   if (sp_ <= sa) return { oneSided: 0 };  // price below range → token0 only
@@ -1013,33 +1103,42 @@ $("o-go").addEventListener("click", async function () {
   $("o-spin").classList.remove("hidden");
   $("o-go").disabled = true;
   try {
-    var body = {
-      action: "mint", chain: state.chain, token0: t0, token1: t1,
-      fee: Number($("o-fee").value), amount0: amt0, amount1: amt1,
-      rangeMode: rangeMode,
-      tickLower: $("o-ticklower").value ? Number($("o-ticklower").value) : undefined,
-      tickUpper: $("o-tickupper").value ? Number($("o-tickupper").value) : undefined,
-      slippageBps: Number($("o-slippage").value || 100),
-      recipient: state.wallet || undefined,
-    };
-    if (rangeMode === "only0" || rangeMode === "only1") {
-      var st = singleTicks(rangeMode === "only0" ? 0 : 1);
-      if (!st) throw new Error("Pick a pool first for single-sided ranges");
-      body.rangeMode = "manual";
-      body.tickLower = st.lo;
-      body.tickUpper = st.hi;
+    var blobs, head;
+    if (isOwner() && state.openCtx) {
+      // owner builds mint calldata locally — free, no x402
+      blobs = ownerMintBlobs();
+      var t = ticksForMode();
+      head = '<h3>Mint Ready — ' + esc(state.openCtx.t0.sym) + "/" + esc(state.openCtx.t1.sym) + " " + (FEE_LABEL[state.openCtx.fee] || "") +
+        '</h3><div class="stats"><div class="stat"><div class="k">Tick Range</div><div class="v">' + t.lo + " → " + t.hi + "</div></div></div>" +
+        '<p class="muted" style="margin:9px 0 3px">Sign in order: approvals first, then mint.</p>';
+    } else {
+      var body = {
+        action: "mint", chain: state.chain, token0: t0, token1: t1,
+        fee: Number($("o-fee").value), amount0: amt0, amount1: amt1,
+        rangeMode: rangeMode,
+        tickLower: $("o-ticklower").value ? Number($("o-ticklower").value) : undefined,
+        tickUpper: $("o-tickupper").value ? Number($("o-tickupper").value) : undefined,
+        slippageBps: Number($("o-slippage").value || 100),
+        recipient: state.wallet || undefined,
+      };
+      if (rangeMode === "only0" || rangeMode === "only1") {
+        var st = singleTicks(rangeMode === "only0" ? 0 : 1);
+        if (!st) throw new Error("Pick a pool first for single-sided ranges");
+        body.rangeMode = "manual"; body.tickLower = st.lo; body.tickUpper = st.hi;
+      }
+      var d = await liqAction(body);
+      blobs = d.txBlobs;
+      head = '<h3>Mint Ready — ' + esc(d.token0.symbol) + "/" + esc(d.token1.symbol) + " " + (FEE_LABEL[d.fee] || "") + "</h3>" +
+        '<div class="stats"><div class="stat"><div class="k">Tick Range</div><div class="v">' + d.tickLower + " → " + d.tickUpper + "</div></div>" +
+        '<div class="stat"><div class="k">Lower Price</div><div class="v">' + fmtNum(d.priceLower) + "</div></div>" +
+        '<div class="stat"><div class="k">Upper Price</div><div class="v">' + fmtNum(d.priceUpper) + "</div></div>" +
+        '<div class="stat"><div class="k">Current Price</div><div class="v">' + fmtNum(d.currentPrice) + "</div></div></div>" +
+        rangeBarHtml(d.priceLower, d.priceUpper, d.currentPrice) +
+        '<p class="muted" style="margin:9px 0 3px">' + esc(d.note || "") + "</p>";
     }
-    var d = await liqAction(body);
     var box = $("o-result");
-    box.innerHTML = '<div class="card"><h3>Mint Ready — ' + esc(d.token0.symbol) + "/" + esc(d.token1.symbol) + " " + (FEE_LABEL[d.fee] || "") + "</h3>" +
-      '<div class="stats">' +
-      '<div class="stat"><div class="k">Tick Range</div><div class="v">' + d.tickLower + " → " + d.tickUpper + "</div></div>" +
-      '<div class="stat"><div class="k">Lower Price</div><div class="v">' + fmtNum(d.priceLower) + "</div></div>" +
-      '<div class="stat"><div class="k">Upper Price</div><div class="v">' + fmtNum(d.priceUpper) + "</div></div>" +
-      '<div class="stat"><div class="k">Current Price</div><div class="v">' + fmtNum(d.currentPrice) + "</div></div>" +
-      "</div>" + rangeBarHtml(d.priceLower, d.priceUpper, d.currentPrice) +
-      '<p class="muted" style="margin:9px 0 3px">' + esc(d.note || "") + "</p>" + txListHtml(d.txBlobs) + "</div>";
-    bindTxButtons(box, d.txBlobs);
+    box.innerHTML = '<div class="card">' + head + txListHtml(blobs) + "</div>";
+    bindTxButtons(box, blobs);
   } catch (e) { toast(e.message, true); }
   $("o-spin").classList.add("hidden");
   $("o-go").disabled = false;
