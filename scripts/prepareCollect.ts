@@ -45,9 +45,10 @@ const data = bankr.chain.encodeFunctionData({
   abi: NPM_ABI, functionName: "collect",
   args: [{ tokenId, recipient, amount0Max: MAX_UINT128, amount1Max: MAX_UINT128 }],
 });
-const blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label: "Collect fees #" + tokenId });
+let blob = null;
+try { blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label: "Collect fees #" + tokenId }); } catch (e) { blob = null; }
 
 return {
   chain: chainKey, tokenId: tokenId.toString(), recipient,
-  txBlobs: [{ label: "Collect fees #" + tokenId, blob }],
+  txBlobs: [{ label: "Collect fees #" + tokenId, blob: blob, raw: { chain: chainKey, to: cfg.npm, data, value: "0" } }],
 };

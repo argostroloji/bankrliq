@@ -115,7 +115,8 @@ const data = bankr.chain.encodeFunctionData({
   abi: NPM_ABI, functionName: "decreaseLiquidity",
   args: [{ tokenId, liquidity: liqToRemove, amount0Min, amount1Min, deadline }],
 });
-const blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label: "Decrease liquidity #" + tokenId });
+let blob = null;
+try { blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label: "Decrease liquidity #" + tokenId }); } catch (e) { blob = null; }
 
 return {
   chain: chainKey, tokenId: tokenId.toString(),

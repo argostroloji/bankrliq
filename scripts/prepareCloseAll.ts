@@ -166,7 +166,8 @@ if (!calls.length) return { error: "nothing to close (all token ids were skipped
 
 const data = bankr.chain.encodeFunctionData({ abi: NPM_ABI, functionName: "multicall", args: [[...calls]] });
 const label = "Close ALL " + closed.length + " position(s)";
-const blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label });
+let blob = null;
+try { blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label }); } catch (e) { blob = null; }
 
 return {
   chain: chainKey, recipient, closed, skipped,

@@ -317,11 +317,28 @@ async function runScript(name, a) {
   if (r && r.error) throw new Error(r.error);
   return r;
 }
-/* build via script, then walk each returned blob through wallet confirmation */
-async function prepareAndSign(scriptName, a) {
+/* Build server-side (fresh chain state + real server clock), then sign.
+   tx.prepare only works in owner/agent context; in viewer context it returns
+   null, so we hand the script-built calldata to the visitor's own Bankr agent,
+   which broadcasts it from THEIR wallet. Both paths use identical calldata. */
+async function signOne(entry, whatFor) {
+  if (entry.blob) return sdk().confirmTransaction(entry.blob);
+  var raw = entry.raw;
+  if (!raw || !raw.data) throw new Error("script returned no transaction");
+  var b = sdk();
+  var msg = "Submit this EXACT transaction from my wallet — do NOT reconstruct, " +
+    "re-encode or modify it, broadcast it exactly as given (" + whatFor + "). " +
+    "Chain: " + chainName(raw.chain) + ". To: " + raw.to + ". Value: 0. Data: " + raw.data;
+  if (typeof b.askChat === "function") return b.askChat(msg);
+  if (typeof b.prefillChat === "function") { b.prefillChat(msg); return; }
+  throw new Error("no signing path available");
+}
+async function prepareAndSign(scriptName, a, whatFor) {
   var r = await runScript(scriptName, a);
   if (!r || !r.txBlobs || !r.txBlobs.length) throw new Error("no transaction returned");
-  for (var i = 0; i < r.txBlobs.length; i++) await sdk().confirmTransaction(r.txBlobs[i].blob);
+  for (var i = 0; i < r.txBlobs.length; i++) {
+    await signOne(r.txBlobs[i], (whatFor || scriptName) + " — " + r.txBlobs[i].label);
+  }
   return r;
 }
 

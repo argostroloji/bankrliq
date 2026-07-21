@@ -136,7 +136,8 @@ if (doBurn) {
   steps.push("burn");
 }
 const data = bankr.chain.encodeFunctionData({ abi: NPM_ABI, functionName: "multicall", args: [[...calls]] });
-const blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label: "Close position #" + tokenId + " (" + percent + "%)" });
+let blob = null;
+try { blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label: "Close position #" + tokenId + " (" + percent + "%)" }); } catch (e) { blob = null; }
 
 return {
   chain: chainKey, tokenId: tokenId.toString(), percent, burn: doBurn, steps,

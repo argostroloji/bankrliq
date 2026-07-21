@@ -23,6 +23,7 @@ let tokenId;
 try { tokenId = BigInt(a.tokenId); if (tokenId < BigInt(0)) throw new Error(); } catch (e) { return { error: "invalid tokenId" }; }
 
 const data = bankr.chain.encodeFunctionData({ abi: NPM_ABI, functionName: "burn", args: [tokenId] });
-const blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label: "Burn NFT #" + tokenId });
+let blob = null;
+try { blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label: "Burn NFT #" + tokenId }); } catch (e) { blob = null; }
 
 return { chain: chainKey, tokenId: tokenId.toString(), txBlobs: [{ label: "Burn NFT #" + tokenId, blob, raw: { chain: chainKey, to: cfg.npm, data, value: "0x0" } }] };

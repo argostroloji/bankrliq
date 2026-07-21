@@ -156,21 +156,27 @@ const amount0Min = (amount0Desired * bps) / BigInt(10000);
 const amount1Min = (amount1Desired * bps) / BigInt(10000);
 const deadline = BigInt(Math.floor(Date.now()/1000) > 1750000000 ? Math.floor(Date.now()/1000) + 3600 : 4102444800);
 
+// tx.prepare only works when the caller is the owner/agent context; in viewer
+// context it is blocked, so it is best-effort and `raw` is always present.
+async function softPrepare(to, data, label) {
+  try { return await bankr.tx.prepare({ chain: chainKey, to, data, label }); } catch (e) { return null; }
+}
+
 const txBlobs = [];
 if (amount0Desired > BigInt(0)) {
   const data = bankr.chain.encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [cfg.npm, amount0Desired] });
   txBlobs.push({
     label: "Approve " + sym0,
-    blob: await bankr.tx.prepare({ chain: chainKey, to: token0, data, label: "Approve " + sym0 }),
-    raw: { chain: chainKey, to: token0, data, value: "0x0" },
+    blob: await softPrepare(token0, data, "Approve " + sym0),
+    raw: { chain: chainKey, to: token0, data, value: "0" },
   });
 }
 if (amount1Desired > BigInt(0)) {
   const data = bankr.chain.encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [cfg.npm, amount1Desired] });
   txBlobs.push({
     label: "Approve " + sym1,
-    blob: await bankr.tx.prepare({ chain: chainKey, to: token1, data, label: "Approve " + sym1 }),
-    raw: { chain: chainKey, to: token1, data, value: "0x0" },
+    blob: await softPrepare(token1, data, "Approve " + sym1),
+    raw: { chain: chainKey, to: token1, data, value: "0" },
   });
 }
 const mintData = bankr.chain.encodeFunctionData({
@@ -179,8 +185,8 @@ const mintData = bankr.chain.encodeFunctionData({
 });
 txBlobs.push({
   label: "Mint " + sym0 + "/" + sym1 + " LP",
-  blob: await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data: mintData, label: "Mint LP position" }),
-  raw: { chain: chainKey, to: cfg.npm, data: mintData, value: "0x0" },
+  blob: await softPrepare(cfg.npm, mintData, "Mint LP position"),
+  raw: { chain: chainKey, to: cfg.npm, data: mintData, value: "0" },
 });
 
 const sp = Number(BigInt(slot0[0])) / Math.pow(2, 96);
