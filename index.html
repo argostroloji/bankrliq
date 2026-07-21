@@ -378,7 +378,7 @@ function rawTx(chain, data) { return { chain: chain, chainId: chain === "robinho
 function ownerCollectTx(chain, tokenId) { return rawTx(chain, encCollectC(tokenId, state.wallet)); }
 function ownerCloseTx(chain, tokenId, liquidity, percent, burn) {
   var liq = (BigInt(liquidity || 0) * BigInt(Math.round(percent * 100))) / BigInt(10000);
-  var dl = BigInt(Math.floor(Date.now() / 1000) + 1200);
+  var dl = BigInt(4102444800); // far-future (2100) — iframe Date.now may be frozen; tx broadcasts immediately so no deadline risk
   var calls = [];
   if (liq > BigInt(0)) calls.push(encDecreaseC(tokenId, liq, dl));
   calls.push(encCollectC(tokenId, state.wallet));
@@ -386,7 +386,7 @@ function ownerCloseTx(chain, tokenId, liquidity, percent, burn) {
   return rawTx(chain, encMulticallC(calls));
 }
 function ownerCloseAllTx(chain, positions) {
-  var dl = BigInt(Math.floor(Date.now() / 1000) + 1200);
+  var dl = BigInt(4102444800); // far-future (2100) — iframe Date.now may be frozen; tx broadcasts immediately so no deadline risk
   var calls = [];
   positions.forEach(function (p) {
     var liq = BigInt(p.liquidity || 0);
@@ -438,7 +438,7 @@ function ownerMintBlobs() {
   var a0 = parseUnitsC($("o-amount0").value || "0", ctx.t0.dec);
   var a1 = parseUnitsC($("o-amount1").value || "0", ctx.t1.dec);
   if (a0 === BigInt(0) && a1 === BigInt(0)) throw new Error("enter an amount");
-  var dl = BigInt(Math.floor(Date.now() / 1000) + 1200);
+  var dl = BigInt(4102444800); // far-future (2100) — iframe Date.now may be frozen; tx broadcasts immediately so no deadline risk
   var chain = ctx.chain, blobs = [];
   if (a0 > BigInt(0)) blobs.push(txWrap(chain, ctx.t0.addr, encApproveC(a0), "Approve " + ctx.t0.sym));
   if (a1 > BigInt(0)) blobs.push(txWrap(chain, ctx.t1.addr, encApproveC(a1), "Approve " + ctx.t1.sym));
