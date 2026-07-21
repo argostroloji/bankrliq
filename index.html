@@ -181,7 +181,9 @@
         <div class="row">
           <input type="number" id="o-simple-amt" placeholder="0.0" min="0" step="any" style="flex:1; min-width:140px; width:auto">
           <select id="o-simple-token"></select>
+          <button class="ghost" id="o-max" title="Use your full balance">MAX</button>
         </div>
+        <div class="muted hidden" id="o-balances" style="margin-top:5px"></div>
         <div class="muted" id="o-simple-other" style="margin-top:5px"></div>
       </div>
       <div style="margin-top:10px">
@@ -190,6 +192,8 @@
           <button class="ghost active" data-mode="auto10">±10%</button>
           <button class="ghost" data-mode="auto20">±20%</button>
           <button class="ghost" data-mode="full">Full Range</button>
+          <button class="ghost hidden" data-mode="only0" id="o-only0"></button>
+          <button class="ghost hidden" data-mode="only1" id="o-only1"></button>
           <button class="ghost" data-mode="manual">Manual</button>
         </div>
         <div class="grid g2 hidden" id="o-manual" style="margin-top:7px">
@@ -707,19 +711,80 @@ function setOpenCtx(ctx) {
   $("o-amount1").value = "";
   renderOpenCtx();
   syncSimple();
+  loadOpenBalances();
 }
 function renderOpenCtx() {
   var ctx = state.openCtx;
   $("o-poolinfo").classList.toggle("hidden", !ctx);
   $("o-nopool").classList.toggle("hidden", !!ctx);
   $("o-simple").classList.toggle("hidden", !ctx);
+  $("o-only0").classList.toggle("hidden", !ctx);
+  $("o-only1").classList.toggle("hidden", !ctx);
   $("o-advanced").open = !ctx;
   if (ctx) {
+    $("o-only0").textContent = ctx.t0.sym + " only";
+    $("o-only1").textContent = ctx.t1.sym + " only";
     $("o-poolinfo").innerHTML = "<b>" + esc(ctx.t0.sym) + " / " + esc(ctx.t1.sym) + "</b> · " +
       (FEE_LABEL[ctx.fee] || ctx.fee) + " on " + esc(CHAINS[ctx.chain].name) +
       " &nbsp;—&nbsp; 1 " + esc(ctx.t0.sym) + " = <b>" + fmtNum(ctx.price0In1) + "</b> " + esc(ctx.t1.sym);
   }
 }
+/* Single-sided ranges: a ~10%-wide band that sits entirely above (token0-only)
+   or below (token1-only) the current price. */
+function singleTicks(side) {
+  var ctx = state.openCtx;
+  if (!ctx) return null;
+  var praw = ctx.price0In1 * Math.pow(10, ctx.t1.dec - ctx.t0.dec);
+  var tick = ctx.tick != null ? ctx.tick : Math.round(Math.log(praw) / Math.log(1.0001));
+  var spacing = TICKSP[ctx.fee] || 60;
+  var width = Math.max(spacing, Math.ceil(953 / spacing) * spacing);
+  if (side === 0) {
+    var lo = Math.floor(tick / spacing) * spacing + spacing;
+    return { lo: lo, hi: lo + width };
+  }
+  var hi = Math.floor(tick / spacing) * spacing;
+  return { lo: hi - width, hi: hi };
+}
+
+/* Wallet balances for the selected pool's tokens (free getBalances script). */
+var openBalances = null;
+function balOf(addr) {
+  if (!openBalances) return null;
+  var t = (openBalances.tokens || []).find(function (x) { return x.address.toLowerCase() === addr.toLowerCase(); });
+  return t && t.balance != null ? t.balance : null;
+}
+function renderBalances() {
+  var box = $("o-balances");
+  var ctx = state.openCtx;
+  if (!ctx || !openBalances) { box.classList.add("hidden"); return; }
+  var parts = [];
+  [ctx.t0, ctx.t1].forEach(function (t) {
+    var b = balOf(t.addr);
+    if (b != null) parts.push(fmtNum(Number(b)) + " " + esc(t.sym));
+  });
+  if (openBalances.native != null) parts.push(fmtNum(Number(openBalances.native)) + " ETH (gas)");
+  if (!parts.length) { box.classList.add("hidden"); return; }
+  box.innerHTML = "You have: <b>" + parts.join("</b> · <b>") + "</b>";
+  box.classList.remove("hidden");
+}
+async function loadOpenBalances() {
+  openBalances = null;
+  renderBalances();
+  var ctx = state.openCtx;
+  if (!ctx || !state.sdk || !state.authed) return;
+  try {
+    var r = await sdk().invokeScript("getBalances", { chain: ctx.chain, tokens: [ctx.t0.addr, ctx.t1.addr] });
+    if (r && !r.error) { openBalances = r; renderBalances(); }
+  } catch (e) { /* balances are a nicety, never block the flow */ }
+}
+$("o-max").addEventListener("click", function () {
+  var ctx = state.openCtx;
+  if (!ctx) return;
+  var b = balOf($("o-simple-token").value);
+  if (b == null) return toast("Balance not loaded yet", true);
+  $("o-simple-amt").value = b;
+  syncSimple();
+});
 /* Given one side's human amount, compute the other side from price + range. */
 function computePair(provideIs0, amt) {
   var ctx = state.openCtx;
@@ -732,6 +797,10 @@ function computePair(provideIs0, amt) {
     var d = Math.round(Math.log(rangeMode === "auto10" ? 1.10 : 1.20) / Math.log(1.0001));
     lo = Math.floor((tick - d) / spacing) * spacing;
     hi = Math.ceil((tick + d) / spacing) * spacing;
+  } else if (rangeMode === "only0" || rangeMode === "only1") {
+    var st = singleTicks(rangeMode === "only0" ? 0 : 1);
+    if (!st) return null;
+    lo = st.lo; hi = st.hi;
   } else if (rangeMode === "full") {
     lo = Math.ceil(-887272 / spacing) * spacing;
     hi = Math.floor(887272 / spacing) * spacing;
@@ -770,9 +839,25 @@ function syncSimple() {
   var pair = provideIs0 ? ctx.t1 : ctx.t0;
   if (r.oneSided !== undefined) {
     var only = r.oneSided === 0 ? ctx.t0 : ctx.t1;
-    $("o-amount0").value = r.oneSided === 0 ? (provideIs0 ? amt : "") : "0";
-    $("o-amount1").value = r.oneSided === 1 ? (provideIs0 ? "" : amt) : "0";
-    other.textContent = "This range sits entirely on one side of the current price — only " + only.sym + " is needed.";
+    if ((r.oneSided === 0) !== provideIs0) {
+      $("o-amount0").value = "";
+      $("o-amount1").value = "";
+      other.textContent = "This range needs " + only.sym + " — switch the token selector to " + only.sym + ".";
+      return;
+    }
+    $("o-amount0").value = r.oneSided === 0 ? trimNum(amt) : "0";
+    $("o-amount1").value = r.oneSided === 1 ? trimNum(amt) : "0";
+    other.textContent = "One-sided deposit — only " + only.sym + " is needed for this range.";
+    return;
+  }
+  // dust guard: if the paired side is <0.1% of the provided value (price sits
+  // on a range boundary), zero it — dust minimums could revert the mint
+  var mineVal1 = provideIs0 ? amt * ctx.price0In1 : amt;
+  var otherVal1 = provideIs0 ? r.other : r.other * ctx.price0In1;
+  if (otherVal1 < mineVal1 * 0.001) {
+    $("o-amount0").value = provideIs0 ? trimNum(amt) : "0";
+    $("o-amount1").value = provideIs0 ? "0" : trimNum(amt);
+    other.textContent = "One-sided deposit — only " + mine.sym + " is needed for this range.";
     return;
   }
   $("o-amount0").value = provideIs0 ? trimNum(amt) : trimNum(r.other);
@@ -791,6 +876,10 @@ $("o-range-mode").addEventListener("click", function (e) {
   rangeMode = b.dataset.mode;
   $("o-range-mode").querySelectorAll("button").forEach(function (x) { x.classList.toggle("active", x === b); });
   $("o-manual").classList.toggle("hidden", rangeMode !== "manual");
+  // single-sided modes need a specific token — switch the selector for the user
+  if (state.openCtx && (rangeMode === "only0" || rangeMode === "only1")) {
+    $("o-simple-token").value = rangeMode === "only0" ? state.openCtx.t0.addr : state.openCtx.t1.addr;
+  }
   syncSimple();
 });
 $("o-go").addEventListener("click", async function () {
@@ -811,6 +900,13 @@ $("o-go").addEventListener("click", async function () {
       slippageBps: Number($("o-slippage").value || 100),
       recipient: state.wallet || undefined,
     };
+    if (rangeMode === "only0" || rangeMode === "only1") {
+      var st = singleTicks(rangeMode === "only0" ? 0 : 1);
+      if (!st) throw new Error("Pick a pool first for single-sided ranges");
+      body.rangeMode = "manual";
+      body.tickLower = st.lo;
+      body.tickUpper = st.hi;
+    }
     var d = await liqAction(body);
     var box = $("o-result");
     box.innerHTML = '<div class="card"><h3>Mint Ready — ' + esc(d.token0.symbol) + "/" + esc(d.token1.symbol) + " " + (FEE_LABEL[d.fee] || "") + "</h3>" +
