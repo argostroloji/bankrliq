@@ -760,7 +760,7 @@ $("p-closeall-yes").addEventListener("click", async function (ev) {
   try {
     btn.innerHTML = '<span class="spinner"></span> sending…';
     await agentDo("Close all my Uniswap V3 LP positions on " + chainName(d.chain) + " (token IDs " + ids.join(", ") +
-      "): for each, remove all liquidity, collect all fees, and burn the NFT, sending everything to my wallet.");
+      "): for each, remove ALL liquidity with amount0Min and amount1Min set to 0 (accept any amount out) and a deadline 20 minutes from now, then collect all fees and burn the NFT, sending everything to my wallet.");
     btn.textContent = "Sent to Bankr agent →";
     toast("Sent to the Bankr agent (see the chat) — closing " + ids.length + " positions");
   } catch (e) {
@@ -830,7 +830,7 @@ function renderPositions(data) {
       btn.innerHTML = '<span class="spinner"></span> preparing…';
       try {
         await agentDo("Fully close my Uniswap V3 LP position " + p.tokenId + " on " + chainName(chainKey) +
-          ": remove all liquidity, collect all fees, and burn the NFT, sending everything to my wallet.");
+          ": remove ALL liquidity with amount0Min and amount1Min set to 0 (accept any amount out), a deadline 20 minutes from now, then collect all fees and burn the NFT, sending everything to my wallet.");
         btn.textContent = "Sent to Bankr agent →";
         toast("Sent to the Bankr agent (see the chat) — it will close the position from your wallet");
       } catch (e) {
@@ -872,7 +872,7 @@ function renderPositions(data) {
       btn.innerHTML = '<span class="spinner"></span> preparing…';
       try {
         await agentDo("Remove " + pct + "% of the liquidity from my Uniswap V3 LP position " + p.tokenId + " on " + chainName(chainKey) +
-          " and collect the fees to my wallet, keeping the position open.");
+          " with amount0Min and amount1Min set to 0 (accept any amount out) and a deadline 20 minutes from now, then collect the fees to my wallet, keeping the position open.");
         btn.innerHTML = "Sent to Bankr agent →";
         toast("Sent to the Bankr agent (see the chat) — it will remove " + pct + "% and collect fees");
       } catch (e) {
