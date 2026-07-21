@@ -1033,15 +1033,36 @@ function reflectAuth() {
 }
 
 renderOpenCtx();
-if (window.bankr && typeof window.bankr.on === "function") {
+// surface silent JS errors instead of a dead UI
+window.addEventListener("error", function (e) {
+  try { toast("UI error: " + (e.message || "unknown"), true); } catch (x) {}
+});
+
+var readyDone = false;
+function onSdkReady() {
+  if (readyDone) return;
+  readyDone = true;
+  try {
+    state.authed = !!(window.bankr.ctx && window.bankr.ctx.isAuthenticated);
+    state.wallet = (window.bankr.ctx && window.bankr.ctx.walletAddress) || null;
+  } catch (e) { state.authed = false; state.wallet = null; }
+  reflectAuth();
+  loadSnapshot();
+  maybeAutoFetchPositions();
+}
+if (window.bankr) {
   state.sdk = true;
-  window.bankr.on("ready", function () {
-    state.authed = !!window.bankr.ctx.isAuthenticated;
-    state.wallet = window.bankr.ctx.walletAddress || null;
-    reflectAuth();
-    loadSnapshot();
-    maybeAutoFetchPositions();
-  });
+  // listen for ready — but it may have ALREADY fired before this script ran,
+  // so also poll bankr.ctx as a fallback and give up into signed-out UI
+  try { if (typeof window.bankr.on === "function") window.bankr.on("ready", onSdkReady); } catch (e) {}
+  var readyTries = 0;
+  (function pollReady() {
+    if (readyDone) return;
+    var c = window.bankr.ctx;
+    if (c && (c.walletAddress || typeof c.isAuthenticated === "boolean")) return onSdkReady();
+    if (++readyTries < 40) return setTimeout(pollReady, 250);
+    onSdkReady(); // 10s with no ctx — proceed signed-out so the UI stays usable
+  })();
 } else {
   $("no-bankr").classList.remove("hidden");
   $("walletChip").textContent = "no SDK";
