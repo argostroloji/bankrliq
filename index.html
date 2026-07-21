@@ -396,24 +396,20 @@ function ownerCloseAllTx(chain, positions) {
   });
   return rawTx(chain, encMulticallC(calls));
 }
-/* Get a tx blob (from the server tx.prepare, which renders a proper signable
-   card in the Bankr chat) and hand it to confirmTransaction. Owner uses the
-   free invokeScript twin; everyone else pays x402. NO silent fallback — if the
-   free script errors we surface it instead of sending an unsignable raw blob. */
-async function signPositionAction(scriptName, body, url, maxUsd) {
-  if (!body.recipient && state.wallet) body.recipient = state.wallet;
-  var r;
-  if (isOwner()) {
-    r = await sdk().invokeScript(scriptName, body);
-    if (r && r.error) throw new Error(r.error);
-  } else {
-    r = await paidFetch(url, { method: "POST", body: body, maxPaymentUsd: maxUsd });
+/* bankr.tx.prepare is a PRIVILEGED op blocked in this app's script sandbox, so
+   the free path can't build a blob server-side. Instead the owner builds the
+   raw {chain,to,data,value} in the browser and hands it straight to
+   confirmTransaction, which routes it to the Bankr chat for approval. Everyone
+   else uses the x402 endpoint (its Bun handler also returns a raw blob). */
+async function signPositionAction(localTxFactory, paidBody, url, maxUsd) {
+  if (!paidBody.recipient && state.wallet) paidBody.recipient = state.wallet;
+  if (isOwner() && localTxFactory) {
+    return sdk().confirmTransaction(localTxFactory());
   }
-  if (!r || !r.txBlobs || !r.txBlobs.length) throw new Error("no transaction returned");
-  for (var i = 0; i < r.txBlobs.length; i++) {
-    await sdk().confirmTransaction(r.txBlobs[i].blob);
-  }
-  return r;
+  var d = await paidFetch(url, { method: "POST", body: paidBody, maxPaymentUsd: maxUsd });
+  if (!d || !d.txBlobs || !d.txBlobs.length) throw new Error("no transaction returned");
+  for (var i = 0; i < d.txBlobs.length; i++) await sdk().confirmTransaction(d.txBlobs[i].blob);
+  return d;
 }
 
 /* mint calldata, client-side (owner free path) */
@@ -765,12 +761,13 @@ $("p-closeall-yes").addEventListener("click", async function (ev) {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> preparing…';
   try {
-    btn.innerHTML = '<span class="spinner"></span> preparing…';
-    await signPositionAction("prepareCloseAll",
+    btn.innerHTML = '<span class="spinner"></span> sending…';
+    await signPositionAction(
+      function () { return ownerCloseAllTx(d.chain, livePositions()); },
       { chain: d.chain, tokenIds: ids, recipient: d.owner },
       X402_CLOSE_ALL, 1.0);
-    btn.textContent = "All closed ✓";
-    toast("Approve the transaction in the Bankr chat — " + ids.length + " positions in one signature");
+    btn.textContent = "Sent — approve in chat";
+    toast("Transaction sent to the Bankr chat → approve it there (" + ids.length + " positions, one signature)");
   } catch (e) {
     btn.disabled = false;
     btn.textContent = "Yes, close everything";
@@ -837,11 +834,12 @@ function renderPositions(data) {
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> preparing…';
       try {
-        await signPositionAction("prepareClose",
+        await signPositionAction(
+          function () { return ownerCloseTx(chainKey, p.tokenId, p.liquidity, 100, true); },
           { action: "close", chain: chainKey, tokenId: p.tokenId, percent: 100, burn: true },
           X402_LIQ_ACTION, 0.5);
-        btn.textContent = "Closed ✓";
-        toast("Approve the transaction in the Bankr chat to finish closing");
+        btn.textContent = "Sent — approve in chat";
+        toast("Transaction sent to the Bankr chat → approve it there to close the position");
       } catch (e) {
         btn.disabled = false;
         btn.innerHTML = 'One-Click Close <span style="opacity:.8">' + closePrice() + "</span>";
@@ -853,11 +851,12 @@ function renderPositions(data) {
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> preparing…';
       try {
-        await signPositionAction("prepareCollect",
+        await signPositionAction(
+          function () { return ownerCollectTx(chainKey, p.tokenId); },
           { action: "collect", chain: chainKey, tokenId: p.tokenId },
           X402_LIQ_ACTION, 0.5);
-        btn.textContent = "Fees collected ✓";
-        toast("Approve the transaction in the Bankr chat — fees go to your wallet");
+        btn.textContent = "Sent — approve in chat";
+        toast("Transaction sent to the Bankr chat → approve it there to collect your fees");
       } catch (e) {
         btn.disabled = false;
         btn.innerHTML = 'Collect fees <span style="opacity:.8">' + closePrice() + "</span>";
@@ -881,11 +880,12 @@ function renderPositions(data) {
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> preparing…';
       try {
-        await signPositionAction("prepareClose",
+        await signPositionAction(
+          function () { return ownerCloseTx(chainKey, p.tokenId, p.liquidity, pct, false); },
           { action: "close", chain: chainKey, tokenId: p.tokenId, percent: pct, burn: false },
           X402_LIQ_ACTION, 0.5);
-        btn.innerHTML = "Closed " + pct + "% ✓";
-        toast("Approve the transaction in the Bankr chat to finish");
+        btn.innerHTML = "Sent — approve in chat";
+        toast("Transaction sent to the Bankr chat → approve it there");
       } catch (e) {
         btn.disabled = false;
         btn.innerHTML = "Close " + pct + '% <span style="opacity:.8">' + closePrice() + "</span>";
@@ -1107,30 +1107,37 @@ $("o-go").addEventListener("click", async function () {
   $("o-spin").classList.remove("hidden");
   $("o-go").disabled = true;
   try {
-    var body = {
-      action: "mint", chain: state.chain, token0: t0, token1: t1,
-      fee: Number($("o-fee").value), amount0: amt0, amount1: amt1,
-      rangeMode: rangeMode,
-      tickLower: $("o-ticklower").value ? Number($("o-ticklower").value) : undefined,
-      tickUpper: $("o-tickupper").value ? Number($("o-tickupper").value) : undefined,
-      slippageBps: Number($("o-slippage").value || 100),
-      recipient: state.wallet || undefined,
-    };
-    if (rangeMode === "only0" || rangeMode === "only1") {
-      var st = singleTicks(rangeMode === "only0" ? 0 : 1);
-      if (!st) throw new Error("Pick a pool first for single-sided ranges");
-      body.rangeMode = "manual"; body.tickLower = st.lo; body.tickUpper = st.hi;
+    var blobs, head;
+    if (isOwner() && state.openCtx) {
+      blobs = ownerMintBlobs(); // client-side (tx.prepare is privileged)
+      var tk = ticksForMode();
+      head = "<h3>Mint — " + esc(state.openCtx.t0.sym) + "/" + esc(state.openCtx.t1.sym) + " " + (FEE_LABEL[state.openCtx.fee] || "") +
+        '</h3><div class="stats"><div class="stat"><div class="k">Tick Range</div><div class="v">' + tk.lo + " → " + tk.hi + "</div></div></div>" +
+        '<p class="muted" style="margin:9px 0 3px">Approve each transaction in the Bankr chat — approvals first, then mint.</p>';
+    } else {
+      var body = {
+        action: "mint", chain: state.chain, token0: t0, token1: t1,
+        fee: Number($("o-fee").value), amount0: amt0, amount1: amt1,
+        rangeMode: rangeMode,
+        tickLower: $("o-ticklower").value ? Number($("o-ticklower").value) : undefined,
+        tickUpper: $("o-tickupper").value ? Number($("o-tickupper").value) : undefined,
+        slippageBps: Number($("o-slippage").value || 100),
+        recipient: state.wallet || undefined,
+      };
+      if (rangeMode === "only0" || rangeMode === "only1") {
+        var st = singleTicks(rangeMode === "only0" ? 0 : 1);
+        if (!st) throw new Error("Pick a pool first for single-sided ranges");
+        body.rangeMode = "manual"; body.tickLower = st.lo; body.tickUpper = st.hi;
+      }
+      var d = await paidFetch(X402_LIQ_ACTION, { method: "POST", body: body, maxPaymentUsd: 0.5 });
+      blobs = d.txBlobs;
+      head = "<h3>Mint — " + esc(d.token0.symbol) + "/" + esc(d.token1.symbol) + " " + (FEE_LABEL[d.fee] || "") + "</h3>" +
+        '<div class="stats"><div class="stat"><div class="k">Tick Range</div><div class="v">' + d.tickLower + " → " + d.tickUpper + "</div></div></div>" +
+        '<p class="muted" style="margin:9px 0 3px">Approve each transaction in the Bankr chat.</p>';
     }
-    var d = await liqAction(body);
     var box = $("o-result");
-    box.innerHTML = '<div class="card"><h3>Mint Ready — ' + esc(d.token0.symbol) + "/" + esc(d.token1.symbol) + " " + (FEE_LABEL[d.fee] || "") + "</h3>" +
-      '<div class="stats"><div class="stat"><div class="k">Tick Range</div><div class="v">' + d.tickLower + " → " + d.tickUpper + "</div></div>" +
-      '<div class="stat"><div class="k">Lower Price</div><div class="v">' + fmtNum(d.priceLower) + "</div></div>" +
-      '<div class="stat"><div class="k">Upper Price</div><div class="v">' + fmtNum(d.priceUpper) + "</div></div>" +
-      '<div class="stat"><div class="k">Current Price</div><div class="v">' + fmtNum(d.currentPrice) + "</div></div></div>" +
-      rangeBarHtml(d.priceLower, d.priceUpper, d.currentPrice) +
-      '<p class="muted" style="margin:9px 0 3px">' + esc(d.note || "") + " Approve each in the Bankr chat.</p>" + txListHtml(d.txBlobs) + "</div>";
-    bindTxButtons(box, d.txBlobs);
+    box.innerHTML = '<div class="card">' + head + txListHtml(blobs) + "</div>";
+    bindTxButtons(box, blobs);
   } catch (e) { toast(e.message, true); }
   $("o-spin").classList.add("hidden");
   $("o-go").disabled = false;

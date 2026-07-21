@@ -38,16 +38,36 @@ try { tokenId = BigInt(a.tokenId); if (tokenId < BigInt(0)) throw new Error(); }
 const recipient = a.recipient || (ctx && ctx.caller && ctx.caller.walletAddress);
 if (!recipient) return { error: "no recipient (sign in first)" };
 
-// a leading on-chain read before tx.prepare — the sandbox appears to reject a
-// script that only prepares a transaction without reading state first.
+const emsg = (e) => String(e && e.message ? e.message : e).slice(0, 200);
+const dbg = { stage: "start" };
+
+// try a read two ways so we learn which primitive the sandbox allows
 try {
+  dbg.stage = "multicall-read";
+  await bankr.chain.multicall({ chain: chainKey, calls: [{ address: cfg.npm, abi: NPM_ABI, functionName: "positions", args: [tokenId] }] });
+  dbg.multicallRead = "ok";
+} catch (e) { dbg.multicallRead = "ERR: " + emsg(e); }
+try {
+  dbg.stage = "readContract";
   await bankr.chain.readContract({ chain: chainKey, address: cfg.npm, abi: NPM_ABI, functionName: "positions", args: [tokenId] });
-} catch (e) { return { error: "position #" + tokenId + " not found on " + chainKey }; }
+  dbg.readContract = "ok";
+} catch (e) { dbg.readContract = "ERR: " + emsg(e); }
 
-const data = bankr.chain.encodeFunctionData({
-  abi: NPM_ABI, functionName: "collect",
-  args: [{ tokenId, recipient, amount0Max: MAX_UINT128, amount1Max: MAX_UINT128 }],
-});
-const blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label: "Collect fees #" + tokenId });
+let data;
+try {
+  dbg.stage = "encode";
+  data = bankr.chain.encodeFunctionData({
+    abi: NPM_ABI, functionName: "collect",
+    args: [{ tokenId, recipient, amount0Max: MAX_UINT128, amount1Max: MAX_UINT128 }],
+  });
+  dbg.encode = "ok";
+} catch (e) { return { error: "encode failed: " + emsg(e), dbg }; }
 
-return { chain: chainKey, tokenId: tokenId.toString(), recipient, txBlobs: [{ label: "Collect fees #" + tokenId, blob, raw: { chain: chainKey, to: cfg.npm, data, value: "0x0" } }] };
+let blob;
+try {
+  dbg.stage = "tx.prepare";
+  blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label: "Collect fees #" + tokenId });
+  dbg.prepare = "ok";
+} catch (e) { return { error: "tx.prepare failed: " + emsg(e), dbg }; }
+
+return { chain: chainKey, tokenId: tokenId.toString(), recipient, dbg, txBlobs: [{ label: "Collect fees #" + tokenId, blob, raw: { chain: chainKey, to: cfg.npm, data, value: "0x0" } }] };
