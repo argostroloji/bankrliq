@@ -13,6 +13,7 @@ const CHAINS = {
     factory: "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
     weth: "0x4200000000000000000000000000000000000006",
     stable: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    logsRpc: "https://mainnet.base.org",
     blockSec: 2.0,
     windowBlocks: 1800,
   },
@@ -20,11 +21,50 @@ const CHAINS = {
     factory: "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA",
     weth: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
     stable: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+    logsRpc: "https://rpc.mainnet.chain.robinhood.com",
     blockSec: 0.09,
-    windowBlocks: 20000,
+    windowBlocks: 6000,
   },
 };
 const MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11";
+const SWAP_TOPIC = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67";
+
+/* bankr.chain.getLogs can be privileged in the app sandbox — fall back to raw
+   JSON-RPC via http.fetch (returns the parsed body directly). Chunked ranges. */
+async function fetchSwapLogs(cfg, chainKey, poolAddr, fromBlock, toBlock) {
+  try {
+    const logs = await bankr.chain.getLogs({
+      chain: chainKey, address: poolAddr,
+      fromBlock: "0x" + fromBlock.toString(16), toBlock: "0x" + toBlock.toString(16),
+      event: SWAP_EVENT,
+    });
+    return logs || [];
+  } catch (eLogs) {
+    const HALF = BigInt(1) << BigInt(255), FULL = BigInt(1) << BigInt(256);
+    const out = [];
+    const CH = BigInt(2000);
+    for (let s = fromBlock; s <= toBlock; s += CH + BigInt(1)) {
+      const e2 = s + CH > toBlock ? toBlock : s + CH;
+      const resp = await http.fetch(cfg.logsRpc, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "eth_getLogs",
+          params: [{ address: poolAddr, topics: [SWAP_TOPIC], fromBlock: "0x" + s.toString(16), toBlock: "0x" + e2.toString(16) }],
+        }),
+      });
+      const raw = resp && resp.result !== undefined ? resp.result : resp;
+      for (const lg of raw || []) {
+        const h = String(lg.data || "").replace(/^0x/, "");
+        let w0 = BigInt("0x" + (h.slice(0, 64) || "0"));
+        let w1 = BigInt("0x" + (h.slice(64, 128) || "0"));
+        if (w0 >= HALF) w0 -= FULL;
+        if (w1 >= HALF) w1 -= FULL;
+        out.push({ args: { amount0: w0, amount1: w1 } });
+      }
+    }
+    return out;
+  }
+}
 const FEES = [100, 500, 3000, 10000];
 const TICK_SPACING = { 100: 1, 500: 10, 3000: 60, 10000: 200 };
 const ZERO = "0x0000000000000000000000000000000000000000";
@@ -202,9 +242,7 @@ for (let i = 0; i < found.length; i++) {
   if (latestBlock != null) {
     try {
       const from = latestBlock > BigInt(cfg.windowBlocks) ? latestBlock - BigInt(cfg.windowBlocks) : BigInt(0);
-      const logs = await bankr.chain.getLogs({
-        chain: chainKey, address: p.addr, fromBlock: "0x" + from.toString(16), toBlock: "0x" + latestBlock.toString(16), event: SWAP_EVENT,
-      });
+      const logs = await fetchSwapLogs(cfg, chainKey, p.addr, from, latestBlock);
       const sideIs0 = usd0 != null;
       const sideUsd = sideIs0 ? usd0 : usd1;
       if (sideUsd != null) {
