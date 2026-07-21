@@ -579,9 +579,42 @@ function maybeAutoFetchPositions() {
   fetchPositions();
 }
 $("p-go").addEventListener("click", fetchPositions);
+/* re-read the SDK context and refresh everything that depends on it */
+function syncCtxAndRefresh() {
+  try {
+    var c = window.bankr && window.bankr.ctx;
+    state.authed = !!(c && c.isAuthenticated);
+    state.wallet = (c && c.walletAddress) || null;
+  } catch (e) { /* keep previous state */ }
+  reflectAuth();
+  if (state.authed) {
+    autoFetchedKey = "";
+    maybeAutoFetchPositions();
+    if (state.openCtx) loadOpenBalances();
+  }
+}
 $("p-signin").addEventListener("click", async function () {
+  var btn = $("p-signin");
+  btn.disabled = true;
+  btn.textContent = "Signing in…";
   try { await sdk().auth.requireSignIn(); } catch (e) { toast(e.message || "sign-in failed", true); }
+  // ctx can populate a moment after the dialog closes — poll for it
+  var tries = 0;
+  (function waitAuth() {
+    syncCtxAndRefresh();
+    if (state.authed) { toast("Signed in"); return; }
+    if (++tries < 20) return setTimeout(waitAuth, 500);
+    btn.disabled = false;
+    btn.textContent = "Sign in";
+    toast("Still signed out — the SDK did not report a wallet after sign-in. Try reloading the app.", true);
+  })();
 });
+// background watcher: if the user signs in through any other path, pick it up
+setInterval(function () {
+  if (state.authed || !state.sdk) return;
+  var c = window.bankr && window.bankr.ctx;
+  if (c && (c.isAuthenticated || c.walletAddress)) syncCtxAndRefresh();
+}, 2000);
 
 async function fetchPositions() {
   if (!state.authed) return;
