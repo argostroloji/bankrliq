@@ -92,6 +92,11 @@
   .price-tag { font-size: .78rem; color: var(--muted); margin-top: 5px; }
   .price-tag b { color: var(--amber); }
   .banner { background: #33270e; border: 1px solid #5d4a1a; color: var(--amber); border-radius: 10px; padding: 10px 12px; font-size: .82rem; margin-bottom: 10px; }
+  .poolinfo { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font-size: .88rem; margin-bottom: 10px; }
+  .poolinfo b { color: var(--accent2); }
+  details { margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; background: var(--panel2); }
+  details summary { cursor: pointer; font-size: .78rem; color: var(--muted); user-select: none; }
+  details[open] summary { margin-bottom: 8px; }
 </style>
 </head>
 <body>
@@ -169,24 +174,17 @@
   <section id="tab-open" class="hidden">
     <div class="card">
       <h3>Open Position</h3>
-      <div class="grid g3">
-        <div><label>Token 0</label><input type="text" id="o-token0" placeholder="0x..."></div>
-        <div><label>Token 1</label><input type="text" id="o-token1" placeholder="0x..."></div>
-        <div>
-          <label>Fee Tier</label>
-          <select id="o-fee" style="width:100%">
-            <option value="100">0.01%</option>
-            <option value="500" selected>0.05%</option>
-            <option value="3000">0.3%</option>
-            <option value="10000">1%</option>
-          </select>
+      <div id="o-poolinfo" class="poolinfo hidden"></div>
+      <div id="o-nopool" class="muted" style="margin-bottom:8px">Pick a pool in <a href="#" id="o-goto-discover">Discover</a> and hit "Open here" — or enter everything manually under Advanced.</div>
+      <div id="o-simple" class="hidden">
+        <label>How much do you want to provide?</label>
+        <div class="row">
+          <input type="number" id="o-simple-amt" placeholder="0.0" min="0" step="any" style="flex:1; min-width:140px; width:auto">
+          <select id="o-simple-token"></select>
         </div>
+        <div class="muted" id="o-simple-other" style="margin-top:5px"></div>
       </div>
-      <div class="grid g2" style="margin-top:9px">
-        <div><label>Token 0 Amount</label><input type="number" id="o-amount0" placeholder="0.0" min="0" step="any"></div>
-        <div><label>Token 1 Amount</label><input type="number" id="o-amount1" placeholder="0.0" min="0" step="any"></div>
-      </div>
-      <div style="margin-top:9px">
+      <div style="margin-top:10px">
         <label>Price Range</label>
         <div class="row" id="o-range-mode">
           <button class="ghost active" data-mode="auto10">±10%</button>
@@ -198,14 +196,33 @@
           <div><label>tickLower</label><input type="number" id="o-ticklower" step="1"></div>
           <div><label>tickUpper</label><input type="number" id="o-tickupper" step="1"></div>
         </div>
+        <p class="muted" style="margin-top:5px">Narrower range = more fees while the price stays inside, but it can drift out. Full Range never goes out of range.</p>
       </div>
-      <div class="grid g2" style="margin-top:9px">
-        <div><label>Slippage (bps)</label><input type="number" id="o-slippage" value="100" min="0" max="5000"></div>
-        <div style="display:flex; align-items:flex-end">
-          <button id="o-go" style="width:100%">Prepare Mint <span class="px" style="color:#d8ceff">· $0.50</span></button>
+      <details id="o-advanced">
+        <summary>Advanced — token addresses, exact amounts, slippage</summary>
+        <div class="grid g3">
+          <div><label>Token 0</label><input type="text" id="o-token0" placeholder="0x..."></div>
+          <div><label>Token 1</label><input type="text" id="o-token1" placeholder="0x..."></div>
+          <div>
+            <label>Fee Tier</label>
+            <select id="o-fee" style="width:100%">
+              <option value="100">0.01%</option>
+              <option value="500" selected>0.05%</option>
+              <option value="3000">0.3%</option>
+              <option value="10000">1%</option>
+            </select>
+          </div>
         </div>
+        <div class="grid g3" style="margin-top:8px">
+          <div><label>Token 0 Amount</label><input type="number" id="o-amount0" placeholder="0.0" min="0" step="any"></div>
+          <div><label>Token 1 Amount</label><input type="number" id="o-amount1" placeholder="0.0" min="0" step="any"></div>
+          <div><label>Price tolerance (bps)</label><input type="number" id="o-slippage" value="100" min="0" max="5000"></div>
+        </div>
+      </details>
+      <div class="row" style="margin-top:12px">
+        <button id="o-go" style="flex:1">Prepare Mint <span class="px" style="color:#d8ceff">· $0.50</span></button>
+        <span id="o-spin" class="hidden"><span class="spinner"></span></span>
       </div>
-      <div class="row" style="margin-top:8px"><span id="o-spin" class="hidden"><span class="spinner"></span></span></div>
     </div>
     <div id="o-result"></div>
   </section>
@@ -283,7 +300,7 @@ var FEE_LABEL = { 100: "0.01%", 500: "0.05%", 3000: "0.3%", 10000: "1%" };
 var CA_RE = /^0x[0-9a-fA-F]{40}$/;
 var STALE_MS = 15 * 60 * 1000;
 
-var state = { chain: "base", wallet: null, authed: false, sdk: false };
+var state = { chain: "base", wallet: null, authed: false, sdk: false, openCtx: null };
 
 /* ================= helpers ================= */
 function $(id) { return document.getElementById(id); }
@@ -400,6 +417,8 @@ $("chainSel").addEventListener("change", function (e) {
   $("o-result").innerHTML = "";
   $("c-result").innerHTML = "";
   autoFetchedKey = "";
+  state.openCtx = null;
+  renderOpenCtx();
   toast("Switched to " + CHAINS[state.chain].name);
   loadSnapshot();
   maybeAutoFetchPositions();
@@ -444,9 +463,12 @@ function renderSnapshot(snap) {
     }, { openBtn: true });
     el.querySelector("[data-open]").addEventListener("click", function () {
       // snapshot pools are always WETH/stable — addresses are known per chain
-      $("o-token0").value = c.tokens[0].addr;
-      $("o-token1").value = c.tokens[1].addr;
-      $("o-fee").value = String(sp.fee);
+      setOpenCtx({
+        chain: state.chain, fee: sp.fee,
+        t0: { addr: c.tokens[0].addr, sym: "WETH", dec: 18 },
+        t1: { addr: c.tokens[1].addr, sym: c.stableSym, dec: 6 },
+        price0In1: Number(sp.currentPrice), tick: null,
+      });
       gotoTab("open");
       toast(sp.pair + " " + (FEE_LABEL[sp.fee] || "") + " selected");
     });
@@ -527,6 +549,7 @@ $("d-go").addEventListener("click", async function () {
 function renderDeepPools(data) {
   var box = $("d-results");
   box.innerHTML = "";
+  var chainKey = data.chain || state.chain;
   var live = (data.pools || []).filter(function (p) { return !p.error; });
   if (!live.length) {
     box.innerHTML = '<div class="card"><span class="muted">No pools found for this query.</span></div>';
@@ -551,9 +574,12 @@ function renderDeepPools(data) {
         " &nbsp;·&nbsp; 1 " + esc(p.token1.symbol) + " = <b>" + fmtNum(p.price1In0) + "</b> " + esc(p.token0.symbol),
     }, { badges: badges, share: share, openBtn: true });
     el.querySelector("[data-open]").addEventListener("click", function () {
-      $("o-token0").value = p.token0.address;
-      $("o-token1").value = p.token1.address;
-      $("o-fee").value = String(p.fee);
+      setOpenCtx({
+        chain: chainKey || state.chain, fee: p.fee,
+        t0: { addr: p.token0.address, sym: p.token0.symbol, dec: p.token0.decimals },
+        t1: { addr: p.token1.address, sym: p.token1.symbol, dec: p.token1.decimals },
+        price0In1: p.price0In1, tick: p.tick,
+      });
       gotoTab("open");
       toast(p.token0.symbol + "/" + p.token1.symbol + " " + (FEE_LABEL[p.fee] || "") + " selected");
     });
@@ -658,12 +684,114 @@ function renderPositions(data) {
 
 /* ================= OPEN ================= */
 var rangeMode = "auto10";
+var TICKSP = { 100: 1, 500: 10, 3000: 60, 10000: 200 };
+
+/* Selected-pool context: set by the "Open here" buttons so regular users
+   never touch raw addresses — they enter ONE amount, we pair the other. */
+function setOpenCtx(ctx) {
+  state.openCtx = ctx;
+  $("o-token0").value = ctx.t0.addr;
+  $("o-token1").value = ctx.t1.addr;
+  $("o-fee").value = String(ctx.fee);
+  var sel = $("o-simple-token");
+  sel.innerHTML = "";
+  // default to the second token (usually the stable — people think in dollars)
+  [ctx.t1, ctx.t0].forEach(function (t, i) {
+    var o = document.createElement("option");
+    o.value = t.addr; o.textContent = t.sym;
+    if (i === 0) o.selected = true;
+    sel.appendChild(o);
+  });
+  $("o-simple-amt").value = "";
+  $("o-amount0").value = "";
+  $("o-amount1").value = "";
+  renderOpenCtx();
+  syncSimple();
+}
+function renderOpenCtx() {
+  var ctx = state.openCtx;
+  $("o-poolinfo").classList.toggle("hidden", !ctx);
+  $("o-nopool").classList.toggle("hidden", !!ctx);
+  $("o-simple").classList.toggle("hidden", !ctx);
+  $("o-advanced").open = !ctx;
+  if (ctx) {
+    $("o-poolinfo").innerHTML = "<b>" + esc(ctx.t0.sym) + " / " + esc(ctx.t1.sym) + "</b> · " +
+      (FEE_LABEL[ctx.fee] || ctx.fee) + " on " + esc(CHAINS[ctx.chain].name) +
+      " &nbsp;—&nbsp; 1 " + esc(ctx.t0.sym) + " = <b>" + fmtNum(ctx.price0In1) + "</b> " + esc(ctx.t1.sym);
+  }
+}
+/* Given one side's human amount, compute the other side from price + range. */
+function computePair(provideIs0, amt) {
+  var ctx = state.openCtx;
+  if (!ctx || !(amt > 0)) return null;
+  var praw = ctx.price0In1 * Math.pow(10, ctx.t1.dec - ctx.t0.dec);
+  var tick = ctx.tick != null ? ctx.tick : Math.round(Math.log(praw) / Math.log(1.0001));
+  var spacing = TICKSP[ctx.fee] || 60;
+  var lo, hi;
+  if (rangeMode === "auto10" || rangeMode === "auto20") {
+    var d = Math.round(Math.log(rangeMode === "auto10" ? 1.10 : 1.20) / Math.log(1.0001));
+    lo = Math.floor((tick - d) / spacing) * spacing;
+    hi = Math.ceil((tick + d) / spacing) * spacing;
+  } else if (rangeMode === "full") {
+    lo = Math.ceil(-887272 / spacing) * spacing;
+    hi = Math.floor(887272 / spacing) * spacing;
+  } else {
+    lo = Number($("o-ticklower").value);
+    hi = Number($("o-tickupper").value);
+    if (!isFinite(lo) || !isFinite(hi) || lo >= hi) return null;
+  }
+  var sp_ = Math.sqrt(praw);
+  var sa = Math.pow(1.0001, lo / 2), sb = Math.pow(1.0001, hi / 2);
+  if (sp_ <= sa) return { oneSided: 0 };  // price below range → token0 only
+  if (sp_ >= sb) return { oneSided: 1 };  // price above range → token1 only
+  if (provideIs0) {
+    var a0raw = amt * Math.pow(10, ctx.t0.dec);
+    var L = a0raw * sp_ * sb / (sb - sp_);
+    return { other: (L * (sp_ - sa)) / Math.pow(10, ctx.t1.dec) };
+  }
+  var a1raw = amt * Math.pow(10, ctx.t1.dec);
+  var L2 = a1raw / (sp_ - sa);
+  return { other: (L2 * (sb - sp_) / (sp_ * sb)) / Math.pow(10, ctx.t0.dec) };
+}
+function trimNum(v) {
+  if (!(v > 0)) return "0";
+  return Number(v.toPrecision(8)).toString();
+}
+function syncSimple() {
+  var ctx = state.openCtx;
+  if (!ctx) return;
+  var amt = Number($("o-simple-amt").value);
+  var provideIs0 = $("o-simple-token").value.toLowerCase() === ctx.t0.addr.toLowerCase();
+  var other = $("o-simple-other");
+  if (!(amt > 0)) { other.textContent = ""; return; }
+  var r = computePair(provideIs0, amt);
+  if (!r) { other.textContent = ""; return; }
+  var mine = provideIs0 ? ctx.t0 : ctx.t1;
+  var pair = provideIs0 ? ctx.t1 : ctx.t0;
+  if (r.oneSided !== undefined) {
+    var only = r.oneSided === 0 ? ctx.t0 : ctx.t1;
+    $("o-amount0").value = r.oneSided === 0 ? (provideIs0 ? amt : "") : "0";
+    $("o-amount1").value = r.oneSided === 1 ? (provideIs0 ? "" : amt) : "0";
+    other.textContent = "This range sits entirely on one side of the current price — only " + only.sym + " is needed.";
+    return;
+  }
+  $("o-amount0").value = provideIs0 ? trimNum(amt) : trimNum(r.other);
+  $("o-amount1").value = provideIs0 ? trimNum(r.other) : trimNum(amt);
+  other.textContent = "≈ " + trimNum(r.other) + " " + pair.sym + " will be paired automatically with your " + trimNum(amt) + " " + mine.sym + ".";
+}
+$("o-simple-amt").addEventListener("input", syncSimple);
+$("o-simple-token").addEventListener("change", syncSimple);
+$("o-ticklower").addEventListener("input", syncSimple);
+$("o-tickupper").addEventListener("input", syncSimple);
+$("o-goto-discover").addEventListener("click", function (e) { e.preventDefault(); gotoTab("discover"); });
+
 $("o-range-mode").addEventListener("click", function (e) {
   var b = e.target.closest("button");
   if (!b) return;
   rangeMode = b.dataset.mode;
   $("o-range-mode").querySelectorAll("button").forEach(function (x) { x.classList.toggle("active", x === b); });
   $("o-manual").classList.toggle("hidden", rangeMode !== "manual");
+  syncSimple();
 });
 $("o-go").addEventListener("click", async function () {
   var amt0 = $("o-amount0").value || "0";
@@ -755,6 +883,7 @@ function reflectAuth() {
   }
 }
 
+renderOpenCtx();
 if (window.bankr && typeof window.bankr.on === "function") {
   state.sdk = true;
   window.bankr.on("ready", function () {
