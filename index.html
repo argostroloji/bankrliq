@@ -426,12 +426,26 @@ function poolCardHtml(p, extras) {
     (p.address ? '<div class="mono" style="margin-top:5px; color:var(--muted)">' + p.address + "</div>" : "");
 }
 
+var snapshotAuto = {};
 async function loadSnapshot() {
   var box = $("d-results");
   if (!state.sdk) return;
   try {
-    var snap = await window.bankr.appKV.get("pools_snapshot_" + state.chain);
-    if (!snap || !snap.pools || !snap.pools.length) {
+    var key = "pools_snapshot_" + state.chain;
+    var snap = await window.bankr.appKV.get(key);
+    var empty = !snap || !snap.pools || !snap.pools.length;
+    var stale = empty || Date.now() - snap.updatedAt > STALE_MS;
+    // auto-populate on first open (free script; once per chain per session)
+    if (stale && !snapshotAuto[state.chain]) {
+      snapshotAuto[state.chain] = true;
+      box.innerHTML = '<div class="card"><span class="spinner"></span> <span class="muted">Loading pools…</span></div>';
+      try {
+        await window.bankr.invokeScript("getPools", { chain: state.chain });
+        snap = await window.bankr.appKV.get(key);
+        empty = !snap || !snap.pools || !snap.pools.length;
+      } catch (e) { /* fall through to whatever we have */ }
+    }
+    if (empty) {
       box.innerHTML = '<div class="card"><span class="muted">No snapshot yet — hit "Snapshot refresh" (free) or run a Deep Search.</span></div>';
       return;
     }
