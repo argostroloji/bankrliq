@@ -13,12 +13,8 @@ const NPM_ABI = [
     inputs: [{ name: "tokenId", type: "uint256" }], outputs: [] },
 ];
 
-// OWNER-ONLY free path (everyone else: paid liq-action endpoint, $0.50)
-const OWNER = "0xa2baa5527e25de10099096a3257d0b1938f095b1";
 const callerAddr = ctx && ctx.caller && ctx.caller.walletAddress;
-if (!callerAddr || callerAddr.toLowerCase() !== OWNER) {
-  return { error: "owner-only script — use the paid liq-action endpoint ($0.50)" };
-}
+if (!callerAddr) return { error: "sign in first" };
 
 const a = args || {};
 const chainKey = a.chain === "robinhood" ? "robinhood" : "base";

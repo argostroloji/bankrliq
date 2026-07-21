@@ -4,11 +4,8 @@
 // single NPM.multicall.
 // args: { chain, tokenIds: ["1","2",...] (max 25), recipient?, slippageBps? }
 
-const OWNER = "0xa2baa5527e25de10099096a3257d0b1938f095b1";
 const callerAddr = ctx && ctx.caller && ctx.caller.walletAddress;
-if (!callerAddr || callerAddr.toLowerCase() !== OWNER) {
-  return { error: "owner-only script — use the paid close-all endpoint ($1.00)" };
-}
+if (!callerAddr) return { error: "sign in first" };
 
 const CHAINS = {
   base: { npm: "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1", factory: "0x33128a8fC17869897dcE68Ed026d694621f6FDfD" },
@@ -105,7 +102,7 @@ try {
 } catch (e) { return { error: "invalid tokenIds" }; }
 if (!ids.length) return { error: "tokenIds is required (array of LP NFT ids)" };
 
-const deadline = BigInt(Math.floor(Date.now() / 1000) + 1200);
+const deadline = BigInt(Math.floor(Date.now()/1000) > 1750000000 ? Math.floor(Date.now()/1000) + 3600 : 4102444800);
 const calls = [];
 const closed = [];
 const skipped = [];

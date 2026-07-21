@@ -105,7 +105,7 @@
   <div id="no-bankr" class="banner hidden">⚠ Bankr SDK not detected — open this app inside the Bankr terminal.</div>
 
   <header>
-    <div class="logo">BANKR<b>LIQ</b><small>Uniswap V3 LP Manager · x402</small></div>
+    <div class="logo">BANKR<b>LIQ</b><small>Uniswap V3 LP Manager · free</small></div>
     <div class="hdr-right">
       <select id="chainSel">
         <option value="base">Base</option>
@@ -240,7 +240,7 @@
 
   <p class="muted" style="text-align:center; margin-top:16px">
     The app never holds private keys — every transaction is signed in your wallet via Bankr.
-    Position tracking &amp; snapshots are free; deep search $0.05, transaction preparation $0.50 (x402).
+    Free for everyone — discovery, tracking and every transaction. You only pay network gas.
   </p>
 </div>
 
@@ -250,16 +250,8 @@
 "use strict";
 
 /* ================= config ================= */
-// Update these after deploying the two x402 handlers (see README).
-var X402_POOL_FINDER = "https://x402.bankr.bot/0xa2baa5527e25de10099096a3257d0b1938f095b1/bankrliq-pool-finder";
-var X402_LIQ_ACTION = "https://x402.bankr.bot/0xa2baa5527e25de10099096a3257d0b1938f095b1/bankrliq-liq-action";
-var X402_CLOSE_ALL = "https://x402.bankr.bot/0xa2baa5527e25de10099096a3257d0b1938f095b1/bankrliq-close-all";
-
-// The app owner's wallet uses everything for free: the frontend routes owner
-// calls through free invokeScript twins (owner-gated server-side via ctx.caller)
-// instead of the paid x402 endpoints.
-var OWNER = "0xa2baa5527e25de10099096a3257d0b1938f095b1";
-
+// Free for everyone: every action runs through the app's own scripts, and
+// tx.prepare builds blobs signed by each visitor's OWN wallet (viewer identity).
 var CHAINS = {
   base: {
     name: "Base",
@@ -316,139 +308,23 @@ function sdk() {
   return window.bankr;
 }
 
-/* x402 call helper */
-async function paidFetch(url, opts) {
-  var res = await sdk().x402.fetch(url, opts);
-  if (!res || !res.ok) {
-    var msg = res && res.body && res.body.error ? res.body.error : "request failed (" + (res && res.status) + ")";
-    throw new Error(msg);
-  }
-  if (res.body && res.body.error) throw new Error(res.body.error);
-  return res.body;
-}
-
-function isOwner() {
-  return !!(state.wallet && state.wallet.toLowerCase() === OWNER);
-}
-/* Owner rides free via invokeScript twins; everyone else pays via x402. */
-/* Owner rides the free invokeScript twin, but the app-script sandbox can
-   reject a call as a "privileged operation". When the free path throws, fall
-   back to the proven paid x402 endpoint (payment goes to the owner's own
-   payout wallet, so it round-trips ~net-zero) — so the action always works. */
-async function ownerOrPaid(scriptName, body, url, maxUsd) {
-  if (isOwner()) {
-    try {
-      var r = await sdk().invokeScript(scriptName, body);
-      if (r && r.error) throw new Error(r.error);
-      return r;
-    } catch (e) {
-      toast("Free path unavailable — routing via x402…");
-    }
-  }
-  return paidFetch(url, { method: "POST", body: body, maxPaymentUsd: maxUsd });
-}
-async function liqAction(body) {
-  if (!body.recipient && state.wallet) body.recipient = state.wallet; // paid endpoint requires it
-  var map = { mint: "prepareMint", decrease: "prepareDecrease", collect: "prepareCollect", burn: "prepareBurn", close: "prepareClose" };
-  return ownerOrPaid(map[body.action], body, X402_LIQ_ACTION, 0.5);
-}
-async function deepSearch(q) {
-  return ownerOrPaid("findPools", q, X402_POOL_FINDER, 0.05);
-}
-
-/* ---- Owner FREE path: build NPM calldata in the browser (pure JS, no server
-   script, no x402) and hand a raw tx to confirmTransaction. Bankr gates
-   tx.prepare behind payment, but a hand-built blob costs nothing. All inputs
-   (tokenId, liquidity) are already loaded in the position card. ---- */
-var NPM_ADDR = { base: "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1", robinhood: "0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3" };
-var SELC = { decrease: "0c49ccbe", collect: "fc6f7865", burn: "42966c68", multicall: "ac9650d8" };
-var MAXU128 = (BigInt(1) << BigInt(128)) - BigInt(1);
-function w256(v) { var b = BigInt(v); if (b < BigInt(0)) b = (BigInt(1) << BigInt(256)) + b; return b.toString(16).padStart(64, "0"); }
-function wAddr(a) { return String(a).toLowerCase().replace(/^0x/, "").padStart(64, "0"); }
-function encCollectC(tokenId, recipient) { return SELC.collect + w256(tokenId) + wAddr(recipient) + w256(MAXU128) + w256(MAXU128); }
-function encDecreaseC(tokenId, liq, deadline) { return SELC.decrease + w256(tokenId) + w256(liq) + w256(0) + w256(0) + w256(deadline); }
-function encBurnC(tokenId) { return SELC.burn + w256(tokenId); }
-function encMulticallC(calls) {
-  var els = calls.map(function (c) { return c.replace(/^0x/, ""); });
-  var offs = [], bodies = [], cur = els.length * 32;
-  els.forEach(function (e) { offs.push(cur); var len = e.length / 2; var pad = e + new Array(Math.ceil(len / 32) * 64 - e.length + 1).join("0"); bodies.push(w256(len) + pad); cur += 32 + pad.length / 2; });
-  return SELC.multicall + w256(32) + w256(els.length) + offs.map(w256).join("") + bodies.join("");
-}
-function rawTx(chain, data) { return { chain: chain, chainId: chain === "robinhood" ? 4663 : 8453, from: state.wallet, to: NPM_ADDR[chain], data: "0x" + data, value: "0x0" }; }
-function ownerCollectTx(chain, tokenId) { return rawTx(chain, encCollectC(tokenId, state.wallet)); }
-function ownerCloseTx(chain, tokenId, liquidity, percent, burn) {
-  var liq = (BigInt(liquidity || 0) * BigInt(Math.round(percent * 100))) / BigInt(10000);
-  var dl = BigInt(4102444800); // far-future (2100) � iframe Date.now may be frozen; tx broadcasts immediately so no deadline risk
-  var calls = [];
-  if (liq > BigInt(0)) calls.push(encDecreaseC(tokenId, liq, dl));
-  calls.push(encCollectC(tokenId, state.wallet));
-  if (burn && percent === 100) calls.push(encBurnC(tokenId));
-  return rawTx(chain, encMulticallC(calls));
-}
-function ownerCloseAllTx(chain, positions) {
-  var dl = BigInt(4102444800); // far-future (2100) � iframe Date.now may be frozen; tx broadcasts immediately so no deadline risk
-  var calls = [];
-  positions.forEach(function (p) {
-    var liq = BigInt(p.liquidity || 0);
-    if (liq > BigInt(0)) calls.push(encDecreaseC(p.tokenId, liq, dl));
-    calls.push(encCollectC(p.tokenId, state.wallet));
-    calls.push(encBurnC(p.tokenId));
-  });
-  return rawTx(chain, encMulticallC(calls));
-}
-/* Transactions go through the Bankr agent in natural language. This is the ONLY
-   path that signs from the user's own wallet (the correct owner address) —
-   pre-built calldata via confirmTransaction gets simulated from the wrong
-   address and reverts on ownership-gated calls (collect/decrease/burn).
-   Proven: the position was opened AND fees collected this way. */
+/* Everything is FREE for everyone. frontendIdentity is "viewer", so an app
+   script's bankr.tx.prepare builds a blob that THE VISITOR's OWN wallet signs.
+   Flow: invokeScript(prepare*) -> tx blob -> confirmTransaction -> user signs. */
 function chainName(c) { return c === "robinhood" ? "Robinhood Chain" : "Base"; }
-async function agentDo(instruction) {
-  var b = sdk();
-  if (typeof b.askChat === "function") return b.askChat(instruction);
-  if (typeof b.prefillChat === "function") { b.prefillChat(instruction); return; }
-  throw new Error("Bankr chat is unavailable — open this app inside the Bankr terminal");
+async function runScript(name, a) {
+  var r = await sdk().invokeScript(name, a || {});
+  if (r && r.error) throw new Error(r.error);
+  return r;
 }
-/* The agent handles simple calls (collect) natively but mis-encodes the
-   decreaseLiquidity tuple, so multi-step closes are sent as EXACT pre-built
-   calldata for the agent to broadcast verbatim from the user's wallet. */
-async function agentSubmitRaw(tx, whatFor) {
-  return agentDo("Submit this EXACT transaction from my wallet — do NOT reconstruct, decode, re-encode or modify it in any way, just broadcast it as-is (" + whatFor + "). " +
-    "Chain: " + chainName(tx.chain) + " (chainId " + tx.chainId + "). To: " + tx.to + ". Value: 0. Data: " + tx.data);
+/* build via script, then walk each returned blob through wallet confirmation */
+async function prepareAndSign(scriptName, a) {
+  var r = await runScript(scriptName, a);
+  if (!r || !r.txBlobs || !r.txBlobs.length) throw new Error("no transaction returned");
+  for (var i = 0; i < r.txBlobs.length; i++) await sdk().confirmTransaction(r.txBlobs[i].blob);
+  return r;
 }
 
-/* mint calldata, client-side (owner free path) */
-var SEL_MINT = "88316456", SEL_APPROVE = "095ea7b3";
-function parseUnitsC(s, dec) {
-  s = String(s == null ? "0" : s).trim(); if (s === "") s = "0";
-  if (/e/i.test(s)) s = Number(s).toFixed(dec);
-  if (!/^\d+(\.\d+)?$/.test(s)) throw new Error("invalid amount");
-  var parts = s.split("."), frac = ((parts[1] || "") + new Array(dec + 1).join("0")).slice(0, dec);
-  return BigInt(parts[0] + frac);
-}
-function encApproveC(amount) { return SEL_APPROVE + wAddr(NPM_ADDR[state.openCtx.chain]) + w256(amount); }
-function encMintC(t0, t1, fee, tickLower, tickUpper, a0, a1, recipient, deadline) {
-  return SEL_MINT + wAddr(t0) + wAddr(t1) + w256(fee) + w256(tickLower) + w256(tickUpper) +
-    w256(a0) + w256(a1) + w256(0) + w256(0) + wAddr(recipient) + w256(deadline);
-}
-/* returns [{label, blob, raw}] for the owner, matching the paid endpoint shape */
-function ownerMintBlobs() {
-  var ctx = state.openCtx;
-  var t = ticksForMode();
-  if (!t) throw new Error("pick a valid range");
-  var a0 = parseUnitsC($("o-amount0").value || "0", ctx.t0.dec);
-  var a1 = parseUnitsC($("o-amount1").value || "0", ctx.t1.dec);
-  if (a0 === BigInt(0) && a1 === BigInt(0)) throw new Error("enter an amount");
-  var dl = BigInt(4102444800); // far-future (2100) � iframe Date.now may be frozen; tx broadcasts immediately so no deadline risk
-  var chain = ctx.chain, blobs = [];
-  if (a0 > BigInt(0)) blobs.push(txWrap(chain, ctx.t0.addr, encApproveC(a0), "Approve " + ctx.t0.sym));
-  if (a1 > BigInt(0)) blobs.push(txWrap(chain, ctx.t1.addr, encApproveC(a1), "Approve " + ctx.t1.sym));
-  blobs.push(txWrap(chain, NPM_ADDR[chain], encMintC(ctx.t0.addr, ctx.t1.addr, ctx.fee, t.lo, t.hi, a0, a1, state.wallet, dl), "Mint " + ctx.t0.sym + "/" + ctx.t1.sym + " LP"));
-  return blobs;
-}
-function txWrap(chain, to, data, label) {
-  var raw = { chain: chain, chainId: chain === "robinhood" ? 4663 : 8453, from: state.wallet, to: to, data: "0x" + data, value: "0x0" };
-  return { label: label, blob: raw, raw: raw };
-}
 
 /* sequential tx-blob signing UI */
 function txListHtml(txBlobs) {
@@ -620,7 +496,7 @@ $("d-go").addEventListener("click", async function () {
     if (t0) q.token0 = t0;
     if (t1) q.token1 = t1;
     if ($("d-fee").value) q.fee = Number($("d-fee").value);
-    var data = await deepSearch(q);
+    var data = await runScript("findPools", q);
     renderDeepPools(data);
   } catch (e) { toast(e.message, true); }
   $("d-spin").classList.add("hidden");
@@ -733,7 +609,7 @@ async function fetchPositions() {
 
 /* ---- Close All: every position in ONE multicall signature ---- */
 var lastPositionsData = null;
-function closeAllPrice() { return isOwner() ? "· FREE" : "· $1.00"; }
+function closeAllPrice() { return "\u00b7 FREE"; }
 function livePositions() {
   return lastPositionsData && lastPositionsData.positions
     ? lastPositionsData.positions.filter(function (p) { return !p.error; })
@@ -766,10 +642,9 @@ $("p-closeall-yes").addEventListener("click", async function (ev) {
   btn.innerHTML = '<span class="spinner"></span> preparing…';
   try {
     btn.innerHTML = '<span class="spinner"></span> sending…';
-    await agentSubmitRaw(ownerCloseAllTx(d.chain, livePositions()),
-      "close all " + ids.length + " LP positions (IDs " + ids.join(", ") + ") in one multicall");
-    btn.textContent = "Sent to Bankr agent →";
-    toast("Sent to the Bankr agent (see the chat) — closing " + ids.length + " positions");
+    await prepareAndSign("prepareCloseAll", { chain: d.chain, tokenIds: ids, recipient: d.owner });
+    btn.textContent = "Confirm in wallet →";
+    toast("Sent to your wallet — confirm to close " + ids.length + " positions in one signature");
   } catch (e) {
     btn.disabled = false;
     btn.textContent = "Yes, close everything";
@@ -836,10 +711,9 @@ function renderPositions(data) {
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> preparing…';
       try {
-        await agentSubmitRaw(ownerCloseTx(chainKey, p.tokenId, p.liquidity, 100, true),
-          "fully close LP position " + p.tokenId + ": decreaseLiquidity + collect + burn in one multicall");
-        btn.textContent = "Sent to Bankr agent →";
-        toast("Sent to the Bankr agent (see the chat) — it will close the position from your wallet");
+        await prepareAndSign("prepareClose", { chain: chainKey, tokenId: p.tokenId, percent: 100, burn: true });
+        btn.textContent = "Confirm in wallet →";
+        toast("Sent to your wallet — confirm to close the position");
       } catch (e) {
         btn.disabled = false;
         btn.innerHTML = 'One-Click Close <span style="opacity:.8">' + closePrice() + "</span>";
@@ -851,10 +725,9 @@ function renderPositions(data) {
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> preparing…';
       try {
-        await agentDo("Collect the fees from my Uniswap V3 LP position " + p.tokenId + " on " + chainName(chainKey) +
-          " to my wallet, keeping the position open.");
-        btn.textContent = "Sent to Bankr agent →";
-        toast("Sent to the Bankr agent (see the chat) — it will collect your fees to your wallet");
+        await prepareAndSign("prepareCollect", { chain: chainKey, tokenId: p.tokenId });
+        btn.textContent = "Confirm in wallet →";
+        toast("Sent to your wallet — confirm to collect your fees");
       } catch (e) {
         btn.disabled = false;
         btn.innerHTML = 'Collect fees <span style="opacity:.8">' + closePrice() + "</span>";
@@ -878,10 +751,9 @@ function renderPositions(data) {
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> preparing…';
       try {
-        await agentSubmitRaw(ownerCloseTx(chainKey, p.tokenId, p.liquidity, pct, false),
-          "remove " + pct + "% of LP position " + p.tokenId + " and collect fees, keeping it open");
-        btn.innerHTML = "Sent to Bankr agent →";
-        toast("Sent to the Bankr agent (see the chat) — it will remove " + pct + "% and collect fees");
+        await prepareAndSign("prepareClose", { chain: chainKey, tokenId: p.tokenId, percent: pct, burn: false });
+        btn.innerHTML = "Confirm in wallet →";
+        toast("Sent to your wallet — confirm to remove " + pct + "% and collect fees");
       } catch (e) {
         btn.disabled = false;
         btn.innerHTML = "Close " + pct + '% <span style="opacity:.8">' + closePrice() + "</span>";
@@ -1103,44 +975,47 @@ $("o-go").addEventListener("click", async function () {
   $("o-spin").classList.remove("hidden");
   $("o-go").disabled = true;
   try {
-    var t0sym = state.openCtx ? state.openCtx.t0.sym : t0;
-    var t1sym = state.openCtx ? state.openCtx.t1.sym : t1;
-    var feePct = FEE_LABEL[Number($("o-fee").value)] || "";
-    var rangeText;
-    if (rangeMode === "auto10") rangeText = "a ±10% price range around the current price";
-    else if (rangeMode === "auto20") rangeText = "a ±20% price range around the current price";
-    else if (rangeMode === "full") rangeText = "the full price range";
-    else if (rangeMode === "only0") rangeText = "a single-sided range just above the current price (deposit only " + t0sym + ")";
-    else if (rangeMode === "only1") rangeText = "a single-sided range just below the current price (deposit only " + t1sym + ")";
-    else rangeText = "the tick range " + $("o-ticklower").value + " to " + $("o-tickupper").value;
-    var amountsText = [];
-    if (Number(amt0) > 0) amountsText.push(amt0 + " " + t0sym);
-    if (Number(amt1) > 0) amountsText.push(amt1 + " " + t1sym);
-    var instr = "Open a Uniswap V3 liquidity position on " + chainName(state.chain) + ": the " + t0sym + "/" + t1sym +
-      " " + feePct + " fee pool (token0 " + t0 + ", token1 " + t1 + "), deposit " + amountsText.join(" and ") +
-      ", using " + rangeText + ". Approve the token(s) and mint from my wallet.";
-    await agentDo(instr);
-    $("o-result").innerHTML = '<div class="card"><p class="muted">Sent to the Bankr agent — see the chat. It will approve the token(s) and open the position from your wallet.</p></div>';
-    toast("Sent to the Bankr agent (see the chat)");
+    var body = {
+      chain: state.chain, token0: t0, token1: t1,
+      fee: Number($("o-fee").value), amount0: amt0, amount1: amt1,
+      rangeMode: rangeMode,
+      slippageBps: Number($("o-slippage").value || 100),
+      recipient: state.wallet || undefined,
+    };
+    if (rangeMode === "manual") {
+      body.tickLower = Number($("o-ticklower").value);
+      body.tickUpper = Number($("o-tickupper").value);
+    } else if (rangeMode === "only0" || rangeMode === "only1") {
+      var st = singleTicks(rangeMode === "only0" ? 0 : 1);
+      if (!st) throw new Error("Pick a pool first for single-sided ranges");
+      body.rangeMode = "manual"; body.tickLower = st.lo; body.tickUpper = st.hi;
+    }
+    var d = await prepareAndSign("prepareMint", body);
+    $("o-result").innerHTML = '<div class="card"><h3>Mint — ' + esc(d.token0.symbol) + "/" + esc(d.token1.symbol) +
+      " " + (FEE_LABEL[d.fee] || "") + "</h3>" +
+      '<div class="stats"><div class="stat"><div class="k">Tick Range</div><div class="v">' + d.tickLower + " → " + d.tickUpper + "</div></div>" +
+      '<div class="stat"><div class="k">Lower Price</div><div class="v">' + fmtNum(d.priceLower) + "</div></div>" +
+      '<div class="stat"><div class="k">Upper Price</div><div class="v">' + fmtNum(d.priceUpper) + "</div></div>" +
+      '<div class="stat"><div class="k">Current Price</div><div class="v">' + fmtNum(d.currentPrice) + "</div></div></div>" +
+      '<p class="muted" style="margin:9px 0 3px">Approve each transaction in your wallet — approvals first, then mint.</p></div>';
+    toast("Sent to your wallet for signing (approvals, then mint)");
   } catch (e) { toast(e.message, true); }
   $("o-spin").classList.add("hidden");
   $("o-go").disabled = false;
 });
 
 /* ================= init ================= */
-function closePrice() { return isOwner() ? "· FREE" : "· $0.50"; }
+function closePrice() { return "\u00b7 FREE"; }
 function reflectAuth() {
   var chip = $("walletChip");
   if (!state.sdk) { chip.textContent = "no SDK"; return; }
   if (state.authed && state.wallet) {
-    chip.textContent = short(state.wallet) + (isOwner() ? " · OWNER FREE" : "");
+    chip.textContent = short(state.wallet);
     chip.classList.add("ok");
     $("p-signedout").classList.add("hidden");
     $("p-main").classList.remove("hidden");
     $("p-owner").textContent = short(state.wallet);
-    if (isOwner()) {
-      document.querySelectorAll(".px").forEach(function (s) { s.textContent = "· FREE"; });
-    }
+    document.querySelectorAll(".px").forEach(function (x) { x.textContent = "\u00b7 FREE"; });
   } else {
     chip.textContent = "signed out";
     chip.classList.remove("ok");

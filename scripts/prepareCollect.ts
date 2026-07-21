@@ -1,7 +1,11 @@
-// BANKRLIQ — prepareCollect
-// args: { chain, tokenId, recipient? }
-// Collects ALL owed tokens (max uint128 on both sides) to the recipient.
-// Returns { txBlobs: [{label, blob}] }.
+// BANKRLIQ — prepareCollect (FREE for every visitor)
+// frontendIdentity is "viewer", so tx.prepare builds a blob that THE CALLER's
+// own wallet signs. Collects ALL owed tokens to the recipient; the position
+// stays open.
+// args: { chain, tokenId, recipient? } → { txBlobs: [{ label, blob }] }
+
+const callerAddr = ctx && ctx.caller && ctx.caller.walletAddress;
+if (!callerAddr) return { error: "sign in first" };
 
 const CHAINS = {
   base: { npm: "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1" },
@@ -23,51 +27,27 @@ const NPM_ABI = [
 ];
 const MAX_UINT128 = (BigInt(1) << BigInt(128)) - BigInt(1);
 
-// OWNER-ONLY free path (everyone else: paid liq-action endpoint, $0.50)
-const OWNER = "0xa2baa5527e25de10099096a3257d0b1938f095b1";
-const callerAddr = ctx && ctx.caller && ctx.caller.walletAddress;
-if (!callerAddr || callerAddr.toLowerCase() !== OWNER) {
-  return { error: "owner-only script — use the paid liq-action endpoint ($0.50)" };
-}
-
 const a = args || {};
 const chainKey = a.chain === "robinhood" ? "robinhood" : "base";
 const cfg = CHAINS[chainKey];
 let tokenId;
 try { tokenId = BigInt(a.tokenId); if (tokenId < BigInt(0)) throw new Error(); } catch (e) { return { error: "invalid tokenId" }; }
-const recipient = a.recipient || (ctx && ctx.caller && ctx.caller.walletAddress);
-if (!recipient) return { error: "no recipient (sign in first)" };
+const recipient = a.recipient || callerAddr;
 
-const emsg = (e) => String(e && e.message ? e.message : e).slice(0, 200);
-const dbg = { stage: "start" };
-
-// try a read two ways so we learn which primitive the sandbox allows
+// confirm the position exists (clear error instead of an opaque revert later)
 try {
-  dbg.stage = "multicall-read";
-  await bankr.chain.multicall({ chain: chainKey, calls: [{ address: cfg.npm, abi: NPM_ABI, functionName: "positions", args: [tokenId] }] });
-  dbg.multicallRead = "ok";
-} catch (e) { dbg.multicallRead = "ERR: " + emsg(e); }
-try {
-  dbg.stage = "readContract";
   await bankr.chain.readContract({ chain: chainKey, address: cfg.npm, abi: NPM_ABI, functionName: "positions", args: [tokenId] });
-  dbg.readContract = "ok";
-} catch (e) { dbg.readContract = "ERR: " + emsg(e); }
+} catch (e) {
+  return { error: "position #" + tokenId + " not found on " + chainKey };
+}
 
-let data;
-try {
-  dbg.stage = "encode";
-  data = bankr.chain.encodeFunctionData({
-    abi: NPM_ABI, functionName: "collect",
-    args: [{ tokenId, recipient, amount0Max: MAX_UINT128, amount1Max: MAX_UINT128 }],
-  });
-  dbg.encode = "ok";
-} catch (e) { return { error: "encode failed: " + emsg(e), dbg }; }
+const data = bankr.chain.encodeFunctionData({
+  abi: NPM_ABI, functionName: "collect",
+  args: [{ tokenId, recipient, amount0Max: MAX_UINT128, amount1Max: MAX_UINT128 }],
+});
+const blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label: "Collect fees #" + tokenId });
 
-let blob;
-try {
-  dbg.stage = "tx.prepare";
-  blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label: "Collect fees #" + tokenId });
-  dbg.prepare = "ok";
-} catch (e) { return { error: "tx.prepare failed: " + emsg(e), dbg }; }
-
-return { chain: chainKey, tokenId: tokenId.toString(), recipient, dbg, txBlobs: [{ label: "Collect fees #" + tokenId, blob, raw: { chain: chainKey, to: cfg.npm, data, value: "0x0" } }] };
+return {
+  chain: chainKey, tokenId: tokenId.toString(), recipient,
+  txBlobs: [{ label: "Collect fees #" + tokenId, blob }],
+};

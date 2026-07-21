@@ -1,12 +1,8 @@
-// BANKRLIQ — findPools (OWNER-ONLY free twin of the paid pool-finder endpoint;
-// everyone else pays $0.05 via x402). Same args and same response shape:
+// BANKRLIQ — findPools (FREE for every visitor). Same args and response shape:
 // { chain, token0?, token1?, fee? } → { chain, pools: [...] }.
 
-const OWNER = "0xa2baa5527e25de10099096a3257d0b1938f095b1";
 const callerAddr0 = ctx && ctx.caller && ctx.caller.walletAddress;
-if (!callerAddr0 || callerAddr0.toLowerCase() !== OWNER) {
-  return { error: "owner-only script — use the paid pool-finder endpoint ($0.05)" };
-}
+if (!callerAddr0) return { error: "sign in first" };
 
 const CHAINS = {
   base: {

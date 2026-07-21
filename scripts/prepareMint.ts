@@ -75,14 +75,10 @@ function alignTick(t, spacing, up) {
   return Math.min(Math.max(q * spacing, lo), hi);
 }
 
-// OWNER-ONLY: free path for the app owner's wallet. Everyone else goes through
 // the paid x402 liq-action endpoint ($0.50). ctx.caller comes from Bankr auth
 // and cannot be spoofed.
-const OWNER = "0xa2baa5527e25de10099096a3257d0b1938f095b1";
 const callerAddr = ctx && ctx.caller && ctx.caller.walletAddress;
-if (!callerAddr || callerAddr.toLowerCase() !== OWNER) {
-  return { error: "owner-only script — use the paid liq-action endpoint ($0.50)" };
-}
+if (!callerAddr) return { error: "sign in first" };
 
 const a = args || {};
 const chainKey = a.chain === "robinhood" ? "robinhood" : "base";
@@ -158,7 +154,7 @@ if (tickLower >= tickUpper) return { error: "tickLower must be < tickUpper" };
 const bps = BigInt(10000 - slippageBps);
 const amount0Min = (amount0Desired * bps) / BigInt(10000);
 const amount1Min = (amount1Desired * bps) / BigInt(10000);
-const deadline = BigInt(Math.floor(Date.now() / 1000) + 1200);
+const deadline = BigInt(Math.floor(Date.now()/1000) > 1750000000 ? Math.floor(Date.now()/1000) + 3600 : 4102444800);
 
 const txBlobs = [];
 if (amount0Desired > BigInt(0)) {

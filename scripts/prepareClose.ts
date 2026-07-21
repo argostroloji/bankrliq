@@ -1,14 +1,11 @@
-// BANKRLIQ — prepareClose (OWNER-ONLY free path; everyone else uses the paid
-// liq-action endpoint's "close" action, $0.50)
+// BANKRLIQ — prepareClose (FREE for every visitor; frontendIdentity is
+// "viewer", so tx.prepare builds a blob signed by THE CALLER's own wallet)
 // args: { chain, tokenId, percent? (default 100), burn? (default true at 100%),
 //         recipient?, slippageBps? }
 // ONE NPM.multicall blob: decreaseLiquidity + collect [+ burn] = one signature.
 
-const OWNER = "0xa2baa5527e25de10099096a3257d0b1938f095b1";
 const callerAddr = ctx && ctx.caller && ctx.caller.walletAddress;
-if (!callerAddr || callerAddr.toLowerCase() !== OWNER) {
-  return { error: "owner-only script — use the paid liq-action endpoint ($0.50)" };
-}
+if (!callerAddr) return { error: "sign in first" };
 
 const CHAINS = {
   base: { npm: "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1", factory: "0x33128a8fC17869897dcE68Ed026d694621f6FDfD" },
@@ -122,7 +119,7 @@ if (liq > BigInt(0)) {
     amount0Min = (a0 * bps) / BigInt(10000);
     amount1Min = (a1 * bps) / BigInt(10000);
   }
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + 1200);
+  const deadline = BigInt(Math.floor(Date.now()/1000) > 1750000000 ? Math.floor(Date.now()/1000) + 3600 : 4102444800);
   calls.push(bankr.chain.encodeFunctionData({
     abi: NPM_ABI, functionName: "decreaseLiquidity",
     args: [{ tokenId, liquidity: liq, amount0Min, amount1Min, deadline }],
