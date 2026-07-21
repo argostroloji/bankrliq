@@ -52,6 +52,10 @@ const ERC20_ABI = [
   { type: "function", name: "decimals", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
   { type: "function", name: "approve", stateMutability: "nonpayable",
     inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] },
+  { type: "function", name: "balanceOf", stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "allowance", stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ type: "uint256" }] },
 ];
 const NPM_ABI = [
   { type: "function", name: "mint", stateMutability: "payable",
@@ -187,8 +191,41 @@ async function softPrepare(to, data, label) {
   try { return await bankr.tx.prepare({ chain: chainKey, to, data, label }); } catch (e) { return null; }
 }
 
+// PREFLIGHT — the tokens are pulled from the SIGNER, so check that wallet, not
+// the recipient. Without this the mint is built happily and only reverts once
+// it reaches the chain, which reads as a confusing "simulation reverted".
+function fmtAmt(v, dec) {
+  const s = v.toString().padStart(dec + 1, "0");
+  const whole = s.slice(0, s.length - dec);
+  const frac = dec ? ("." + s.slice(s.length - dec)).replace(/0+$/, "").replace(/\.$/, "") : "";
+  return whole + frac;
+}
+async function walletState(tokenAddr, need) {
+  if (need === BigInt(0)) return { bal: BigInt(0), allow: BigInt(0) };
+  const [bal, allow] = await Promise.all([
+    __read({ chain: chainKey, address: tokenAddr, abi: ERC20_ABI, functionName: "balanceOf", args: [callerAddr] }),
+    __read({ chain: chainKey, address: tokenAddr, abi: ERC20_ABI, functionName: "allowance", args: [callerAddr, cfg.npm] }),
+  ]);
+  return { bal: BigInt(norm(bal) || 0), allow: BigInt(norm(allow) || 0) };
+}
+const [w0, w1] = await Promise.all([
+  walletState(token0, amount0Desired),
+  walletState(token1, amount1Desired),
+]);
+const short = [];
+if (amount0Desired > w0.bal) short.push(fmtAmt(amount0Desired, dec0) + " " + sym0 + " (you have " + fmtAmt(w0.bal, dec0) + ")");
+if (amount1Desired > w1.bal) short.push(fmtAmt(amount1Desired, dec1) + " " + sym1 + " (you have " + fmtAmt(w1.bal, dec1) + ")");
+if (short.length) {
+  const wethNote = (sym0 === "WETH" && amount0Desired > w0.bal) || (sym1 === "WETH" && amount1Desired > w1.bal)
+    ? " Note: WETH is wrapped ETH — plain ETH in your wallet does not count until you wrap it."
+    : "";
+  return { error: "Not enough balance. This position needs " + short.join(" and ") + "." + wethNote };
+}
+
 const txBlobs = [];
-if (amount0Desired > BigInt(0)) {
+// only ask for an approval when the existing allowance is actually short —
+// every extra signature is another chance for the user to drop the sequence
+if (amount0Desired > BigInt(0) && w0.allow < amount0Desired) {
   const data = await __enc({ abi: ERC20_ABI, functionName: "approve", args: [cfg.npm, amount0Desired] });
   txBlobs.push({
     label: "Approve " + sym0,
@@ -196,7 +233,7 @@ if (amount0Desired > BigInt(0)) {
     raw: { chain: chainKey, to: token0, data, value: "0" },
   });
 }
-if (amount1Desired > BigInt(0)) {
+if (amount1Desired > BigInt(0) && w1.allow < amount1Desired) {
   const data = await __enc({ abi: ERC20_ABI, functionName: "approve", args: [cfg.npm, amount1Desired] });
   txBlobs.push({
     label: "Approve " + sym1,

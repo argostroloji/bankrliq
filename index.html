@@ -325,13 +325,7 @@ async function signOne(entry, whatFor) {
   if (entry.blob) return sdk().confirmTransaction(entry.blob);
   var raw = entry.raw;
   if (!raw || !raw.data) throw new Error("script returned no transaction");
-  /* never hand anything but real hex calldata to a wallet or an agent */
-  if (typeof raw.data !== "string" || raw.data.slice(0, 2) !== "0x" || raw.data.length < 10) {
-    throw new Error("calldata is malformed (" + typeof raw.data + ") — not sending it anywhere");
-  }
-  if (typeof raw.to !== "string" || raw.to.slice(0, 2) !== "0x" || raw.to.length !== 42) {
-    throw new Error("target address is malformed — not sending it anywhere");
-  }
+  checkRaw(raw); /* never hand anything but real hex calldata to a wallet or an agent */
   var b = sdk();
   var msg = "Submit this EXACT transaction from my wallet — do NOT reconstruct, " +
     "re-encode or modify it, broadcast it exactly as given (" + whatFor + "). " +
@@ -340,12 +334,43 @@ async function signOne(entry, whatFor) {
   if (typeof b.prefillChat === "function") { b.prefillChat(msg); return; }
   throw new Error("no signing path available");
 }
+/* Multi-step actions (approve -> mint) must reach the chain IN ORDER. Handing
+   them over as separate chat messages lets the agent broadcast the mint before
+   the approval confirms, which reverts. So when we fall back to the chat path
+   we send ONE message listing every step in order. */
+function checkRaw(raw) {
+  if (!raw || typeof raw.data !== "string" || raw.data.slice(0, 2) !== "0x" || raw.data.length < 10) {
+    throw new Error("calldata is malformed — not sending it anywhere");
+  }
+  if (typeof raw.to !== "string" || raw.to.slice(0, 2) !== "0x" || raw.to.length !== 42) {
+    throw new Error("target address is malformed — not sending it anywhere");
+  }
+}
+async function signAll(entries, whatFor) {
+  var everyBlob = entries.every(function (e) { return !!e.blob; });
+  if (everyBlob) {
+    for (var i = 0; i < entries.length; i++) await sdk().confirmTransaction(entries[i].blob);
+    return;
+  }
+  entries.forEach(function (e) { checkRaw(e.raw); });
+  var chain = chainName(entries[0].raw.chain);
+  var lines = entries.map(function (e, i) {
+    return (i + 1) + ") " + e.label + "\n   to: " + e.raw.to + "\n   value: 0\n   data: " + e.raw.data;
+  });
+  var msg = "Broadcast " + (entries.length > 1 ? "these " + entries.length + " transactions" : "this transaction") +
+    " from my wallet on " + chain + " (" + whatFor + ")." +
+    (entries.length > 1 ? " Send them IN ORDER and wait for each to confirm before sending the next." : "") +
+    " Submit each one EXACTLY as given — do NOT reconstruct, re-encode or modify the calldata, and do not substitute your own values:\n\n" +
+    lines.join("\n\n");
+  var b = sdk();
+  if (typeof b.askChat === "function") return b.askChat(msg);
+  if (typeof b.prefillChat === "function") { b.prefillChat(msg); return; }
+  throw new Error("no signing path available");
+}
 async function prepareAndSign(scriptName, a, whatFor) {
   var r = await runScript(scriptName, a);
   if (!r || !r.txBlobs || !r.txBlobs.length) throw new Error("no transaction returned");
-  for (var i = 0; i < r.txBlobs.length; i++) {
-    await signOne(r.txBlobs[i], (whatFor || scriptName) + " — " + r.txBlobs[i].label);
-  }
+  await signAll(r.txBlobs, whatFor || scriptName);
   return r;
 }
 
