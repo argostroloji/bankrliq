@@ -43,6 +43,22 @@ const NPM_ABI = [
 const norm = (r) => (r && typeof r === "object" && "result" in r ? r.result : r);
 const ZERO = "0x0000000000000000000000000000000000000000";
 
+// multicall may be restricted in some sandbox contexts — fall back to plain
+// sequential readContract calls, which need only the read:chain permission.
+async function mcall(ck, calls) {
+  try {
+    return await bankr.chain.multicall({ chain: ck, calls });
+  } catch (e) {
+    const out = [];
+    for (const c of calls) {
+      try {
+        out.push({ status: "success", result: await bankr.chain.readContract({ chain: ck, address: c.address, abi: c.abi, functionName: c.functionName, args: c.args }) });
+      } catch (e2) { out.push({ status: "failure", result: null }); }
+    }
+    return out;
+  }
+}
+
 function parseUnits(s, dec) {
   s = String(s == null ? "0" : s).trim();
   if (s === "") s = "0";
@@ -84,17 +100,14 @@ const poolAddr = norm(await bankr.chain.readContract({
 }));
 if (!poolAddr || poolAddr === ZERO) return { error: "pool does not exist for this pair/fee" };
 
-const info = await bankr.chain.multicall({
-  chain: chainKey,
-  calls: [
-    { address: poolAddr, abi: POOL_ABI, functionName: "slot0", args: [] },
-    { address: poolAddr, abi: POOL_ABI, functionName: "token0", args: [] },
-    { address: a.token0, abi: ERC20_ABI, functionName: "decimals", args: [] },
-    { address: a.token1, abi: ERC20_ABI, functionName: "decimals", args: [] },
-    { address: a.token0, abi: ERC20_ABI, functionName: "symbol", args: [] },
-    { address: a.token1, abi: ERC20_ABI, functionName: "symbol", args: [] },
-  ],
-});
+const info = await mcall(chainKey, [
+  { address: poolAddr, abi: POOL_ABI, functionName: "slot0", args: [] },
+  { address: poolAddr, abi: POOL_ABI, functionName: "token0", args: [] },
+  { address: a.token0, abi: ERC20_ABI, functionName: "decimals", args: [] },
+  { address: a.token1, abi: ERC20_ABI, functionName: "decimals", args: [] },
+  { address: a.token0, abi: ERC20_ABI, functionName: "symbol", args: [] },
+  { address: a.token1, abi: ERC20_ABI, functionName: "symbol", args: [] },
+]);
 const slot0 = norm(info[0]);
 const poolT0 = String(norm(info[1])).toLowerCase();
 const decA = Number(norm(info[2]) ?? 18);

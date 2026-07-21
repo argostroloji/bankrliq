@@ -65,6 +65,22 @@ const norm = (r) => (r && typeof r === "object" && "result" in r ? r.result : r)
 const Q96 = Math.pow(2, 96);
 const isAddr = (s) => typeof s === "string" && /^0x[0-9a-fA-F]{40}$/.test(s);
 
+// multicall may be restricted in some sandbox contexts — fall back to plain
+// sequential readContract calls, which need only the read:chain permission.
+async function mcall(ck, calls) {
+  try {
+    return await bankr.chain.multicall({ chain: ck, calls });
+  } catch (e) {
+    const out = [];
+    for (const c of calls) {
+      try {
+        out.push({ status: "success", result: await bankr.chain.readContract({ chain: ck, address: c.address, abi: c.abi, functionName: c.functionName, args: c.args }) });
+      } catch (e2) { out.push({ status: "failure", result: null }); }
+    }
+    return out;
+  }
+}
+
 const a = args || {};
 const chainKey = a.chain === "robinhood" ? "robinhood" : "base";
 const cfg = CHAINS[chainKey];
@@ -89,7 +105,7 @@ const poolCalls = [];
 for (const [tA, tB] of pairs) for (const fee of feeFilter) {
   poolCalls.push({ address: cfg.factory, abi: FACTORY_ABI, functionName: "getPool", args: [tA, tB, fee] });
 }
-const poolAddrs = (await bankr.chain.multicall({ chain: chainKey, calls: poolCalls })).map(norm);
+const poolAddrs = (await mcall(chainKey, poolCalls)).map(norm);
 
 const found = [];
 let pi = 0;
@@ -117,7 +133,7 @@ for (const t of uniqTokens) {
     { address: t, abi: ERC20_ABI, functionName: "decimals", args: [] },
   );
 }
-const st = (await bankr.chain.multicall({ chain: chainKey, calls: stateCalls })).map(norm);
+const st = (await mcall(chainKey, stateCalls)).map(norm);
 const meta = {};
 uniqTokens.forEach((t, i) => {
   meta[t] = { symbol: st[found.length * 5 + i * 2] || "???", decimals: Number(st[found.length * 5 + i * 2 + 1] ?? 18) };
@@ -125,10 +141,9 @@ uniqTokens.forEach((t, i) => {
 
 // WETH → USD via the deepest WETH/stable pool (for pricing non-stable pairs)
 async function wethUsd() {
-  const cands = (await bankr.chain.multicall({
-    chain: chainKey,
-    calls: [500, 3000, 100].map((f) => ({ address: cfg.factory, abi: FACTORY_ABI, functionName: "getPool", args: [cfg.weth, cfg.stable, f] })),
-  })).map(norm).filter((x) => x && x !== ZERO);
+  const cands = (await mcall(chainKey,
+    [500, 3000, 100].map((f) => ({ address: cfg.factory, abi: FACTORY_ABI, functionName: "getPool", args: [cfg.weth, cfg.stable, f] }))
+  )).map(norm).filter((x) => x && x !== ZERO);
   if (!cands.length) return null;
   const s0 = norm(await bankr.chain.readContract({ chain: chainKey, address: cands[0], abi: POOL_ABI, functionName: "slot0", args: [] }));
   const sp = Number(BigInt(s0[0])) / Q96;

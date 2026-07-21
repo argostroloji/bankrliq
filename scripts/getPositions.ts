@@ -105,6 +105,22 @@ function fmtUnits(v, dec) {
 const norm = (r) => (r && typeof r === "object" && "result" in r ? r.result : r);
 const ZERO = "0x0000000000000000000000000000000000000000";
 
+// multicall may be restricted in some sandbox contexts — fall back to plain
+// sequential readContract calls, which need only the read:chain permission.
+async function mcall(ck, calls) {
+  try {
+    return await bankr.chain.multicall({ chain: ck, calls });
+  } catch (e) {
+    const out = [];
+    for (const c of calls) {
+      try {
+        out.push({ status: "success", result: await bankr.chain.readContract({ chain: ck, address: c.address, abi: c.abi, functionName: c.functionName, args: c.args }) });
+      } catch (e2) { out.push({ status: "failure", result: null }); }
+    }
+    return out;
+  }
+}
+
 /* ---- main ---- */
 const chainKey = args && args.chain === "robinhood" ? "robinhood" : "base";
 const cfg = CHAINS[chainKey];
@@ -118,18 +134,12 @@ const count = Math.min(total, 25);
 if (count === 0) return { chain: chainKey, owner, total, positions: [] };
 
 // newest indexes first — recent positions are the live ones
-const idRes = await bankr.chain.multicall({
-  chain: chainKey,
-  calls: Array.from({ length: count }, (_, i) => ({
-    address: cfg.npm, abi: NPM_ABI, functionName: "tokenOfOwnerByIndex", args: [owner, total - 1 - i],
-  })),
-});
+const idRes = await mcall(chainKey, Array.from({ length: count }, (_, i) => ({
+  address: cfg.npm, abi: NPM_ABI, functionName: "tokenOfOwnerByIndex", args: [owner, total - 1 - i],
+})));
 const ids = idRes.map(norm).filter((v) => v !== null && v !== undefined);
 
-const posRes = await bankr.chain.multicall({
-  chain: chainKey,
-  calls: ids.map((id) => ({ address: cfg.npm, abi: NPM_ABI, functionName: "positions", args: [id] })),
-});
+const posRes = await mcall(chainKey, ids.map((id) => ({ address: cfg.npm, abi: NPM_ABI, functionName: "positions", args: [id] })));
 
 const livePos = [];
 for (let i = 0; i < ids.length; i++) {
@@ -150,16 +160,13 @@ if (livePos.length === 0) return { chain: chainKey, owner, total, positions: [] 
 
 // pool addresses + token metadata
 const tokens = [...new Set(livePos.flatMap((p) => [p.token0.toLowerCase(), p.token1.toLowerCase()]))];
-const lookupRes = await bankr.chain.multicall({
-  chain: chainKey,
-  calls: [
+const lookupRes = await mcall(chainKey, [
     ...livePos.map((p) => ({ address: cfg.factory, abi: FACTORY_ABI, functionName: "getPool", args: [p.token0, p.token1, p.fee] })),
     ...tokens.flatMap((t) => [
       { address: t, abi: ERC20_ABI, functionName: "symbol", args: [] },
       { address: t, abi: ERC20_ABI, functionName: "decimals", args: [] },
     ]),
-  ],
-});
+]);
 const meta = {};
 tokens.forEach((t, i) => {
   meta[t] = {
@@ -182,7 +189,7 @@ for (let i = 0; i < livePos.length; i++) {
     { address: livePos[i].pool, abi: POOL_ABI, functionName: "ticks", args: [livePos[i].tickUpper] },
   );
 }
-const poolRes = await bankr.chain.multicall({ chain: chainKey, calls: poolCalls });
+const poolRes = await mcall(chainKey, poolCalls);
 
 const positions = [];
 let cursor = 0;

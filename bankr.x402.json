@@ -1,59 +1,69 @@
 {
-  "app": "bankrliq",
-  "description": "Uniswap V3 LP management API for Base + Robinhood Chain. Agent-friendly: pay per call with x402 USDC, no registration. Read pools, then get ready-to-sign transaction calldata (raw {chain,to,data,value}) for mint/decrease/collect/burn/close.",
-  "endpoints": [
-    {
-      "name": "bankrliq-pool-finder",
-      "method": "POST",
-      "priceUsd": 0.05,
-      "description": "Find Uniswap V3 pools with live TVL, 24h volume (sampled from Swap logs), fees and APR. Pass token0+token1 for an exact pair, only token0 for a CA search (pairs it with WETH + the chain stable), or nothing for WETH/stable defaults.",
-      "input": {
-        "type": "object",
-        "properties": {
-          "chain": { "type": "string", "enum": ["base", "robinhood"], "default": "base" },
-          "token0": { "type": "string", "description": "ERC20 address (optional)" },
-          "token1": { "type": "string", "description": "ERC20 address (optional)" },
-          "fee": { "type": "number", "enum": [100, 500, 3000, 10000], "description": "single fee tier (optional, default all)" }
+  "network": "base",
+  "currency": "USDC",
+  "services": {
+    "bankrliq-pool-finder": {
+      "price": "0.05",
+      "description": "Uniswap V3 pool finder for Base and Robinhood Chain. Pass token0+token1 for an exact pair, only token0 for a CA search (pairs it with WETH + the chain stable), or nothing for WETH/stable defaults. Returns pools with live TVL, 24h volume sampled from Swap logs, fees and APR estimates. Used by the Bankr Liquidity Manager app; agent-friendly.",
+      "methods": ["GET", "POST"],
+      "scheme": "exact",
+      "schema": {
+        "input": {
+          "type": "object",
+          "properties": {
+            "chain": { "type": "string", "description": "base | robinhood (default base)" },
+            "token0": { "type": "string", "description": "ERC20 address (optional; alone = CA search)" },
+            "token1": { "type": "string", "description": "ERC20 address (optional)" },
+            "fee": { "type": "number", "description": "single fee tier: 100 | 500 | 3000 | 10000 (optional, default all)" }
+          }
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "chain": { "type": "string" },
+            "pools": { "type": "array", "description": "[{ fee, address, tickSpacing, token0:{address,symbol,decimals}, token1:{...}, tick, liquidity, price0In1, price1In0, tvlUsd, vol24hUsd, fees24hUsd, aprEst, volNote }]" }
+          }
         }
-      },
-      "output": "{ chain, pools: [{ fee, address, tickSpacing, token0:{address,symbol,decimals}, token1:{...}, tick, liquidity, price0In1, price1In0, tvlUsd, vol24hUsd, fees24hUsd, aprEst, volNote }] }"
+      }
     },
-    {
-      "name": "bankrliq-liq-action",
-      "method": "POST",
-      "priceUsd": 0.5,
-      "description": "Prepare Uniswap V3 LP transactions. Returns txBlobs: [{ label, blob, raw }] — 'blob' is Bankr-native for confirmTransaction; 'raw' is { chain, to, data, value } calldata any agent can sign and submit with its own wallet. Actions: mint (approvals + mint, sign in order), decrease, collect, burn, close (decreaseLiquidity + collect [+ burn] as ONE multicall = one signature).",
-      "input": {
-        "type": "object",
-        "required": ["action"],
-        "properties": {
-          "action": { "type": "string", "enum": ["mint", "decrease", "collect", "burn", "close"] },
-          "chain": { "type": "string", "enum": ["base", "robinhood"], "default": "base" },
-          "token0": { "type": "string", "description": "mint: ERC20 address" },
-          "token1": { "type": "string", "description": "mint: ERC20 address" },
-          "fee": { "type": "number", "enum": [100, 500, 3000, 10000], "description": "mint" },
-          "amount0": { "type": "string", "description": "mint: decimal amount of token0" },
-          "amount1": { "type": "string", "description": "mint: decimal amount of token1" },
-          "rangeMode": { "type": "string", "enum": ["auto10", "auto20", "full", "manual"], "description": "mint" },
-          "tickLower": { "type": "number", "description": "mint (manual mode)" },
-          "tickUpper": { "type": "number", "description": "mint (manual mode)" },
-          "tokenId": { "type": "string", "description": "decrease/collect/burn/close: LP NFT id" },
-          "percent": { "type": "number", "description": "decrease/close: 1-100, default 100" },
-          "burn": { "type": "boolean", "description": "close: burn the NFT at 100% (default true)" },
-          "recipient": { "type": "string", "description": "mint/collect/close: defaults to the paying wallet" },
-          "slippageBps": { "type": "number", "description": "default 100 (1%)" }
+    "bankrliq-liq-action": {
+      "price": "0.50",
+      "description": "Uniswap V3 LP transaction preparer for Base and Robinhood Chain. Actions: mint (approvals + mint, sign in order), decrease, collect, burn, close (decreaseLiquidity + collect [+ burn] as ONE multicall = one signature). Returns txBlobs: [{label, blob, raw}] — 'raw' is {chain,to,data,value} calldata any agent can sign with its own wallet. Nothing is signed server-side. Used by the Bankr Liquidity Manager app.",
+      "methods": ["POST"],
+      "scheme": "exact",
+      "schema": {
+        "input": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "description": "mint | decrease | collect | burn | close" },
+            "chain": { "type": "string", "description": "base | robinhood (default base)" },
+            "token0": { "type": "string", "description": "mint: ERC20 address" },
+            "token1": { "type": "string", "description": "mint: ERC20 address" },
+            "fee": { "type": "number", "description": "mint: 100 | 500 | 3000 | 10000" },
+            "amount0": { "type": "string", "description": "mint: decimal amount of token0" },
+            "amount1": { "type": "string", "description": "mint: decimal amount of token1" },
+            "rangeMode": { "type": "string", "description": "mint: auto10 | auto20 | full | manual" },
+            "tickLower": { "type": "number", "description": "mint (manual mode)" },
+            "tickUpper": { "type": "number", "description": "mint (manual mode)" },
+            "tokenId": { "type": "string", "description": "decrease/collect/burn/close: LP NFT id" },
+            "percent": { "type": "number", "description": "decrease/close: 1-100 (default 100)" },
+            "burn": { "type": "boolean", "description": "close: burn the NFT at 100% (default true)" },
+            "recipient": { "type": "string", "description": "defaults to the paying wallet" },
+            "slippageBps": { "type": "number", "description": "default 100 (1%)" }
+          },
+          "required": ["action"]
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string" },
+            "chain": { "type": "string" },
+            "txBlobs": { "type": "array", "description": "[{ label, blob, raw: { chain, to, data, value } }] — sign in order" },
+            "steps": { "type": "array", "description": "close: executed steps" },
+            "error": { "type": "string", "description": "present on failure" }
+          }
         }
-      },
-      "output": "{ action, chain, txBlobs: [{ label, blob, raw: { chain, to, data, value } }], ...preview fields } or { error }"
+      }
     }
-  ],
-  "chains": {
-    "base": { "id": 8453, "positionManager": "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1", "factory": "0x33128a8fC17869897dcE68Ed026d694621f6FDfD" },
-    "robinhood": { "id": 4663, "positionManager": "0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3", "factory": "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA" }
-  },
-  "notes": [
-    "Transactions are prepared only — nothing is signed or broadcast server-side; the caller signs with its own wallet.",
-    "Approvals are exact-amount (no infinite approvals); mint/decrease minimums are slippage-protected; deadlines are 20 minutes.",
-    "Contract addresses were verified on-chain 2026-07-20."
-  ]
+  }
 }

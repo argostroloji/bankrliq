@@ -335,6 +335,7 @@ function isOwner() {
 }
 /* Owner rides free via invokeScript twins; everyone else pays via x402. */
 async function liqAction(body) {
+  if (!body.recipient && state.wallet) body.recipient = state.wallet; // paid endpoint requires it
   if (isOwner()) {
     var map = { mint: "prepareMint", decrease: "prepareDecrease", collect: "prepareCollect", burn: "prepareBurn", close: "prepareClose" };
     var r = await sdk().invokeScript(map[body.action], body);
@@ -426,40 +427,55 @@ function poolCardHtml(p, extras) {
     (p.address ? '<div class="mono" style="margin-top:5px; color:var(--muted)">' + p.address + "</div>" : "");
 }
 
+function renderSnapshot(snap) {
+  var box = $("d-results");
+  var stale = Date.now() - snap.updatedAt > STALE_MS;
+  var head = '<div class="muted" style="margin-top:6px">Snapshot ' + new Date(snap.updatedAt).toLocaleTimeString() +
+    (stale ? ' <span class="badge stale">STALE</span>' : "") + "</div>";
+  box.innerHTML = head + snap.pools.map(function (sp) {
+    return '<div class="pool">' + poolCardHtml({
+      pairLabel: sp.pair, fee: sp.fee, tvlUsd: sp.tvl,
+      vol24hUsd: sp.volume24h > 0 ? sp.volume24h : null,
+      aprEst: sp.apr > 0 ? sp.apr : null,
+      priceLabel: "1 WETH = <b>" + esc(sp.currentPrice) + "</b> " + esc(CHAINS[state.chain].stableSym),
+    }) + "</div>";
+  }).join("");
+}
+
+/* Run getPools and render its RETURN value — works even when appKV writes
+   are restricted for viewer-invoked scripts. */
+async function refreshSnapshot() {
+  var ret = await sdk().invokeScript("getPools", { chain: state.chain });
+  if (ret && ret.error) throw new Error(ret.error);
+  if (ret && ret.pools) { renderSnapshot(ret); return true; }
+  return false;
+}
+
 var snapshotAuto = {};
 async function loadSnapshot() {
   var box = $("d-results");
   if (!state.sdk) return;
+  var scriptErr = null;
   try {
     var key = "pools_snapshot_" + state.chain;
-    var snap = await window.bankr.appKV.get(key);
+    var snap = null;
+    try { snap = await window.bankr.appKV.get(key); } catch (e) { snap = null; }
     var empty = !snap || !snap.pools || !snap.pools.length;
     var stale = empty || Date.now() - snap.updatedAt > STALE_MS;
-    // auto-populate on first open (free script; once per chain per session)
+    if (!empty) renderSnapshot(snap); // show cached data instantly
+    // auto-populate/refresh on first open (free script; once per chain per session)
     if (stale && !snapshotAuto[state.chain]) {
       snapshotAuto[state.chain] = true;
-      box.innerHTML = '<div class="card"><span class="spinner"></span> <span class="muted">Loading pools…</span></div>';
+      if (empty) box.innerHTML = '<div class="card"><span class="spinner"></span> <span class="muted">Loading pools…</span></div>';
       try {
-        await window.bankr.invokeScript("getPools", { chain: state.chain });
-        snap = await window.bankr.appKV.get(key);
-        empty = !snap || !snap.pools || !snap.pools.length;
-      } catch (e) { /* fall through to whatever we have */ }
+        if (await refreshSnapshot()) return;
+      } catch (e) { scriptErr = e.message || String(e); }
     }
     if (empty) {
-      box.innerHTML = '<div class="card"><span class="muted">No snapshot yet — hit "Snapshot refresh" (free) or run a Deep Search.</span></div>';
-      return;
+      box.innerHTML = '<div class="card"><span class="muted">' +
+        (scriptErr ? "Pool loading failed: " + esc(scriptErr) + " — " : "No snapshot yet — ") +
+        'hit "Snapshot refresh" (free) or run a Deep Search.</span></div>';
     }
-    var stale = Date.now() - snap.updatedAt > STALE_MS;
-    var head = '<div class="muted" style="margin-top:6px">Snapshot ' + new Date(snap.updatedAt).toLocaleTimeString() +
-      (stale ? ' <span class="badge stale">STALE</span>' : "") + "</div>";
-    box.innerHTML = head + snap.pools.map(function (sp) {
-      return '<div class="pool">' + poolCardHtml({
-        pairLabel: sp.pair, fee: sp.fee, tvlUsd: sp.tvl,
-        vol24hUsd: sp.volume24h > 0 ? sp.volume24h : null,
-        aprEst: sp.apr > 0 ? sp.apr : null,
-        priceLabel: "1 WETH = <b>" + esc(sp.currentPrice) + "</b> " + esc(CHAINS[state.chain].stableSym),
-      }) + "</div>";
-    }).join("");
   } catch (e) {
     box.innerHTML = '<div class="card"><span class="muted">Snapshot unavailable: ' + esc(e.message || e) + "</span></div>";
   }
@@ -470,8 +486,7 @@ $("d-snapshot").addEventListener("click", async function () {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> refreshing…';
   try {
-    await sdk().invokeScript("getPools", { chain: state.chain });
-    await loadSnapshot();
+    if (!(await refreshSnapshot())) await loadSnapshot();
     toast("Snapshot refreshed");
   } catch (e) { toast(e.message || "refresh failed", true); }
   btn.disabled = false;

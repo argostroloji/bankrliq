@@ -44,15 +44,31 @@ const ZERO = "0x0000000000000000000000000000000000000000";
 const Q96 = 2 ** 96;
 const Q128 = BigInt(2) ** BigInt(128);
 
+// multicall may be restricted in some sandbox contexts — fall back to plain
+// sequential readContract calls, which need only the read:chain permission.
+async function mcall(chainKey, calls) {
+  try {
+    return await bankr.chain.multicall({ chain: chainKey, calls });
+  } catch (e) {
+    const out = [];
+    for (const c of calls) {
+      try {
+        out.push({ status: "success", result: await bankr.chain.readContract({ chain: chainKey, address: c.address, abi: c.abi, functionName: c.functionName, args: c.args }) });
+      } catch (e2) { out.push({ status: "failure", result: null }); }
+    }
+    return out;
+  }
+}
+// appKV writes can be privileged for viewer-invoked scripts — best effort only.
+async function kvGet(k) { try { return await appKV.get(k); } catch (e) { return null; } }
+async function kvSet(k, v) { try { await appKV.set(k, v); } catch (e) { /* best effort */ } }
+
 const chainKey = args && args.chain === "robinhood" ? "robinhood" : "base";
 const cfg = CHAINS[chainKey];
 const FEES = [100, 500, 3000, 10000];
 
 // multicall #1: locate the 4 pools
-const poolRes = await bankr.chain.multicall({
-  chain: chainKey,
-  calls: FEES.map((fee) => ({ address: cfg.factory, abi: FACTORY_ABI, functionName: "getPool", args: [cfg.weth, cfg.stable, fee] })),
-});
+const poolRes = await mcall(chainKey, FEES.map((fee) => ({ address: cfg.factory, abi: FACTORY_ABI, functionName: "getPool", args: [cfg.weth, cfg.stable, fee] })));
 const live = [];
 poolRes.forEach((r, i) => {
   const addr = norm(r);
@@ -60,12 +76,13 @@ poolRes.forEach((r, i) => {
 });
 
 const kvKey = "pools_snapshot_" + chainKey;
-const metaKey = kvKey + "_meta";
+// declared in the manifest dataSchemas — undeclared keys can be rejected
+const metaKey = "pools_meta_" + chainKey;
 const now = Date.now();
 
 if (live.length === 0) {
   const empty = { pools: [], updatedAt: now };
-  await appKV.set(kvKey, empty);
+  await kvSet(kvKey, empty);
   return empty;
 }
 
@@ -78,10 +95,9 @@ for (const p of live) {
   calls.push({ address: cfg.weth, abi: ERC20_ABI, functionName: "balanceOf", args: [p.addr] });
   calls.push({ address: cfg.stable, abi: ERC20_ABI, functionName: "balanceOf", args: [p.addr] });
 }
-const res = await bankr.chain.multicall({ chain: chainKey, calls });
+const res = await mcall(chainKey, calls);
 
-let prevMeta = null;
-try { prevMeta = await appKV.get(metaKey); } catch (e) { prevMeta = null; }
+const prevMeta = await kvGet(metaKey);
 
 const pools = [];
 const newMeta = { t: now, perFee: {} };
@@ -129,6 +145,6 @@ for (let i = 0; i < live.length; i++) {
 }
 
 const snapshot = { pools, updatedAt: now };
-await appKV.set(kvKey, snapshot);
-await appKV.set(metaKey, newMeta);
+await kvSet(kvKey, snapshot);
+await kvSet(metaKey, newMeta);
 return snapshot;
