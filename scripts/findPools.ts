@@ -1,3 +1,28 @@
+// --- chain bridge helpers (see diagEncode findings) -------------------------
+// bankr.chain.* serializes its options to JSON: BigInt args throw, and every
+// call returns a Promise. __s() deep-converts BigInt -> decimal string; the
+// wrappers always await. encodeFunctionData is validated to be real 0x hex so
+// a bad encode fails loudly here instead of reaching a wallet.
+function __s(v) {
+  if (typeof v === "bigint") return v.toString();
+  if (Array.isArray(v)) return v.map(__s);
+  if (v && typeof v === "object") {
+    const o = {};
+    for (const k of Object.keys(v)) o[k] = __s(v[k]);
+    return o;
+  }
+  return v;
+}
+async function __enc(o) {
+  const d = await bankr.chain.encodeFunctionData(__s(o));
+  if (typeof d !== "string" || d.slice(0, 2) !== "0x" || d.length < 10) {
+    throw new Error("encodeFunctionData returned " + (typeof d) + " for " + (o && o.functionName));
+  }
+  return d;
+}
+async function __read(o) { return await bankr.chain.readContract(__s(o)); }
+async function __multi(o) { return await bankr.chain.multicall(__s(o)); }
+// ---------------------------------------------------------------------------
 // BANKRLIQ — findPools (FREE for every visitor). Same args and response shape:
 // { chain, token0?, token1?, fee? } → { chain, pools: [...] }.
 
@@ -105,12 +130,12 @@ const isAddr = (s) => typeof s === "string" && /^0x[0-9a-fA-F]{40}$/.test(s);
 // sequential readContract calls, which need only the read:chain permission.
 async function mcall(ck, calls) {
   try {
-    return await bankr.chain.multicall({ chain: ck, calls });
+    return await __multi({ chain: ck, calls });
   } catch (e) {
     const out = [];
     for (const c of calls) {
       try {
-        out.push({ status: "success", result: await bankr.chain.readContract({ chain: ck, address: c.address, abi: c.abi, functionName: c.functionName, args: c.args }) });
+        out.push({ status: "success", result: await __read({ chain: ck, address: c.address, abi: c.abi, functionName: c.functionName, args: c.args }) });
       } catch (e2) { out.push({ status: "failure", result: null }); }
     }
     return out;
@@ -181,7 +206,7 @@ async function wethUsd() {
     [500, 3000, 100].map((f) => ({ address: cfg.factory, abi: FACTORY_ABI, functionName: "getPool", args: [cfg.weth, cfg.stable, f] }))
   )).map(norm).filter((x) => x && x !== ZERO);
   if (!cands.length) return null;
-  const s0 = norm(await bankr.chain.readContract({ chain: chainKey, address: cands[0], abi: POOL_ABI, functionName: "slot0", args: [] }));
+  const s0 = norm(await __read({ chain: chainKey, address: cands[0], abi: POOL_ABI, functionName: "slot0", args: [] }));
   const sp = Number(BigInt(s0[0])) / Q96;
   return sp * sp * Math.pow(10, 18 - 6); // WETH is token0 vs 6-dec stable on both chains
 }
@@ -190,7 +215,7 @@ let wethPriceUsd = null;
 // latest block for the volume sampling window
 let latestBlock = null;
 try {
-  latestBlock = BigInt(norm(await bankr.chain.readContract({
+  latestBlock = BigInt(norm(await __read({
     chain: chainKey, address: MULTICALL3, abi: MC3_ABI, functionName: "getBlockNumber", args: [],
   })));
 } catch (e) { latestBlock = null; }

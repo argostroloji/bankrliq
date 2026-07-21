@@ -325,6 +325,13 @@ async function signOne(entry, whatFor) {
   if (entry.blob) return sdk().confirmTransaction(entry.blob);
   var raw = entry.raw;
   if (!raw || !raw.data) throw new Error("script returned no transaction");
+  /* never hand anything but real hex calldata to a wallet or an agent */
+  if (typeof raw.data !== "string" || raw.data.slice(0, 2) !== "0x" || raw.data.length < 10) {
+    throw new Error("calldata is malformed (" + typeof raw.data + ") — not sending it anywhere");
+  }
+  if (typeof raw.to !== "string" || raw.to.slice(0, 2) !== "0x" || raw.to.length !== 42) {
+    throw new Error("target address is malformed — not sending it anywhere");
+  }
   var b = sdk();
   var msg = "Submit this EXACT transaction from my wallet — do NOT reconstruct, " +
     "re-encode or modify it, broadcast it exactly as given (" + whatFor + "). " +

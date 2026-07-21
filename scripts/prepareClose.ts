@@ -1,3 +1,28 @@
+// --- chain bridge helpers (see diagEncode findings) -------------------------
+// bankr.chain.* serializes its options to JSON: BigInt args throw, and every
+// call returns a Promise. __s() deep-converts BigInt -> decimal string; the
+// wrappers always await. encodeFunctionData is validated to be real 0x hex so
+// a bad encode fails loudly here instead of reaching a wallet.
+function __s(v) {
+  if (typeof v === "bigint") return v.toString();
+  if (Array.isArray(v)) return v.map(__s);
+  if (v && typeof v === "object") {
+    const o = {};
+    for (const k of Object.keys(v)) o[k] = __s(v[k]);
+    return o;
+  }
+  return v;
+}
+async function __enc(o) {
+  const d = await bankr.chain.encodeFunctionData(__s(o));
+  if (typeof d !== "string" || d.slice(0, 2) !== "0x" || d.length < 10) {
+    throw new Error("encodeFunctionData returned " + (typeof d) + " for " + (o && o.functionName));
+  }
+  return d;
+}
+async function __read(o) { return await bankr.chain.readContract(__s(o)); }
+async function __multi(o) { return await bankr.chain.multicall(__s(o)); }
+// ---------------------------------------------------------------------------
 // BANKRLIQ — prepareClose (FREE for every visitor; frontendIdentity is
 // "viewer", so tx.prepare builds a blob signed by THE CALLER's own wallet)
 // args: { chain, tokenId, percent? (default 100), burn? (default true at 100%),
@@ -97,7 +122,7 @@ const slipN = Number(a.slippageBps);
 const slippageBps = Number.isFinite(slipN) ? Math.min(Math.max(slipN, 0), 5000) : 100;
 const recipient = a.recipient || callerAddr;
 
-const p = norm(await bankr.chain.readContract({
+const p = norm(await __read({
   chain: chainKey, address: cfg.npm, abi: NPM_ABI, functionName: "positions", args: [tokenId],
 }));
 if (!p) return { error: "position not found" };
@@ -109,33 +134,33 @@ const calls = [];
 const steps = [];
 if (liq > BigInt(0)) {
   let amount0Min = BigInt(0), amount1Min = BigInt(0);
-  const poolAddr = norm(await bankr.chain.readContract({
+  const poolAddr = norm(await __read({
     chain: chainKey, address: cfg.factory, abi: FACTORY_ABI, functionName: "getPool", args: [p[2], p[3], Number(p[4])],
   }));
   if (poolAddr && poolAddr !== ZERO) {
-    const slot0 = norm(await bankr.chain.readContract({ chain: chainKey, address: poolAddr, abi: POOL_ABI, functionName: "slot0", args: [] }));
+    const slot0 = norm(await __read({ chain: chainKey, address: poolAddr, abi: POOL_ABI, functionName: "slot0", args: [] }));
     const [a0, a1] = amountsForLiquidity(BigInt(slot0[0]), getSqrtRatioAtTick(Number(p[5])), getSqrtRatioAtTick(Number(p[6])), liq);
     const bps = BigInt(10000 - slippageBps);
     amount0Min = (a0 * bps) / BigInt(10000);
     amount1Min = (a1 * bps) / BigInt(10000);
   }
   const deadline = BigInt(Math.floor(Date.now()/1000) > 1750000000 ? Math.floor(Date.now()/1000) + 3600 : 4102444800);
-  calls.push(bankr.chain.encodeFunctionData({
+  calls.push(await __enc({
     abi: NPM_ABI, functionName: "decreaseLiquidity",
     args: [{ tokenId, liquidity: liq, amount0Min, amount1Min, deadline }],
   }));
   steps.push("decreaseLiquidity");
 }
-calls.push(bankr.chain.encodeFunctionData({
+calls.push(await __enc({
   abi: NPM_ABI, functionName: "collect",
   args: [{ tokenId, recipient, amount0Max: MAX_UINT128, amount1Max: MAX_UINT128 }],
 }));
 steps.push("collect");
 if (doBurn) {
-  calls.push(bankr.chain.encodeFunctionData({ abi: NPM_ABI, functionName: "burn", args: [tokenId] }));
+  calls.push(await __enc({ abi: NPM_ABI, functionName: "burn", args: [tokenId] }));
   steps.push("burn");
 }
-const data = bankr.chain.encodeFunctionData({ abi: NPM_ABI, functionName: "multicall", args: [[...calls]] });
+const data = await __enc({ abi: NPM_ABI, functionName: "multicall", args: [[...calls]] });
 let blob = null;
 try { blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label: "Close position #" + tokenId + " (" + percent + "%)" }); } catch (e) { blob = null; }
 

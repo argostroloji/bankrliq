@@ -1,3 +1,28 @@
+// --- chain bridge helpers (see diagEncode findings) -------------------------
+// bankr.chain.* serializes its options to JSON: BigInt args throw, and every
+// call returns a Promise. __s() deep-converts BigInt -> decimal string; the
+// wrappers always await. encodeFunctionData is validated to be real 0x hex so
+// a bad encode fails loudly here instead of reaching a wallet.
+function __s(v) {
+  if (typeof v === "bigint") return v.toString();
+  if (Array.isArray(v)) return v.map(__s);
+  if (v && typeof v === "object") {
+    const o = {};
+    for (const k of Object.keys(v)) o[k] = __s(v[k]);
+    return o;
+  }
+  return v;
+}
+async function __enc(o) {
+  const d = await bankr.chain.encodeFunctionData(__s(o));
+  if (typeof d !== "string" || d.slice(0, 2) !== "0x" || d.length < 10) {
+    throw new Error("encodeFunctionData returned " + (typeof d) + " for " + (o && o.functionName));
+  }
+  return d;
+}
+async function __read(o) { return await bankr.chain.readContract(__s(o)); }
+async function __multi(o) { return await bankr.chain.multicall(__s(o)); }
+// ---------------------------------------------------------------------------
 // BANKRLIQ — prepareMint
 // args: { chain, token0, token1, fee, amount0, amount1 (decimal strings),
 //         rangeMode: "auto10"|"auto20"|"full"|"manual", tickLower?, tickUpper?,
@@ -47,12 +72,12 @@ const ZERO = "0x0000000000000000000000000000000000000000";
 // sequential readContract calls, which need only the read:chain permission.
 async function mcall(ck, calls) {
   try {
-    return await bankr.chain.multicall({ chain: ck, calls });
+    return await __multi({ chain: ck, calls });
   } catch (e) {
     const out = [];
     for (const c of calls) {
       try {
-        out.push({ status: "success", result: await bankr.chain.readContract({ chain: ck, address: c.address, abi: c.abi, functionName: c.functionName, args: c.args }) });
+        out.push({ status: "success", result: await __read({ chain: ck, address: c.address, abi: c.abi, functionName: c.functionName, args: c.args }) });
       } catch (e2) { out.push({ status: "failure", result: null }); }
     }
     return out;
@@ -91,7 +116,7 @@ const recipient = a.recipient || (ctx && ctx.caller && ctx.caller.walletAddress)
 if (!recipient) return { error: "no recipient (sign in first)" };
 const slippageBps = Math.min(Math.max(Number(a.slippageBps) || 100, 0), 5000);
 
-const poolAddr = norm(await bankr.chain.readContract({
+const poolAddr = norm(await __read({
   chain: chainKey, address: cfg.factory, abi: FACTORY_ABI, functionName: "getPool", args: [a.token0, a.token1, fee],
 }));
 if (!poolAddr || poolAddr === ZERO) return { error: "pool does not exist for this pair/fee" };
@@ -164,7 +189,7 @@ async function softPrepare(to, data, label) {
 
 const txBlobs = [];
 if (amount0Desired > BigInt(0)) {
-  const data = bankr.chain.encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [cfg.npm, amount0Desired] });
+  const data = await __enc({ abi: ERC20_ABI, functionName: "approve", args: [cfg.npm, amount0Desired] });
   txBlobs.push({
     label: "Approve " + sym0,
     blob: await softPrepare(token0, data, "Approve " + sym0),
@@ -172,14 +197,14 @@ if (amount0Desired > BigInt(0)) {
   });
 }
 if (amount1Desired > BigInt(0)) {
-  const data = bankr.chain.encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [cfg.npm, amount1Desired] });
+  const data = await __enc({ abi: ERC20_ABI, functionName: "approve", args: [cfg.npm, amount1Desired] });
   txBlobs.push({
     label: "Approve " + sym1,
     blob: await softPrepare(token1, data, "Approve " + sym1),
     raw: { chain: chainKey, to: token1, data, value: "0" },
   });
 }
-const mintData = bankr.chain.encodeFunctionData({
+const mintData = await __enc({
   abi: NPM_ABI, functionName: "mint",
   args: [{ token0, token1, fee, tickLower, tickUpper, amount0Desired, amount1Desired, amount0Min, amount1Min, recipient, deadline }],
 });

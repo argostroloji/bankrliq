@@ -1,3 +1,28 @@
+// --- chain bridge helpers (see diagEncode findings) -------------------------
+// bankr.chain.* serializes its options to JSON: BigInt args throw, and every
+// call returns a Promise. __s() deep-converts BigInt -> decimal string; the
+// wrappers always await. encodeFunctionData is validated to be real 0x hex so
+// a bad encode fails loudly here instead of reaching a wallet.
+function __s(v) {
+  if (typeof v === "bigint") return v.toString();
+  if (Array.isArray(v)) return v.map(__s);
+  if (v && typeof v === "object") {
+    const o = {};
+    for (const k of Object.keys(v)) o[k] = __s(v[k]);
+    return o;
+  }
+  return v;
+}
+async function __enc(o) {
+  const d = await bankr.chain.encodeFunctionData(__s(o));
+  if (typeof d !== "string" || d.slice(0, 2) !== "0x" || d.length < 10) {
+    throw new Error("encodeFunctionData returned " + (typeof d) + " for " + (o && o.functionName));
+  }
+  return d;
+}
+async function __read(o) { return await bankr.chain.readContract(__s(o)); }
+async function __multi(o) { return await bankr.chain.multicall(__s(o)); }
+// ---------------------------------------------------------------------------
 // BANKRLIQ — getPools (PUBLIC script, tight budget: ≤10 chain reads, ≤5s, ≤8KB return)
 // Snapshots the WETH/stable pools across all 4 fee tiers using exactly 2 multicalls.
 // 24h volume is estimated from the feeGrowthGlobal delta between snapshots — no
@@ -48,12 +73,12 @@ const Q128 = BigInt(2) ** BigInt(128);
 // sequential readContract calls, which need only the read:chain permission.
 async function mcall(chainKey, calls) {
   try {
-    return await bankr.chain.multicall({ chain: chainKey, calls });
+    return await __multi({ chain: chainKey, calls });
   } catch (e) {
     const out = [];
     for (const c of calls) {
       try {
-        out.push({ status: "success", result: await bankr.chain.readContract({ chain: chainKey, address: c.address, abi: c.abi, functionName: c.functionName, args: c.args }) });
+        out.push({ status: "success", result: await __read({ chain: chainKey, address: c.address, abi: c.abi, functionName: c.functionName, args: c.args }) });
       } catch (e2) { out.push({ status: "failure", result: null }); }
     }
     return out;

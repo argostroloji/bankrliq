@@ -1,3 +1,28 @@
+// --- chain bridge helpers (see diagEncode findings) -------------------------
+// bankr.chain.* serializes its options to JSON: BigInt args throw, and every
+// call returns a Promise. __s() deep-converts BigInt -> decimal string; the
+// wrappers always await. encodeFunctionData is validated to be real 0x hex so
+// a bad encode fails loudly here instead of reaching a wallet.
+function __s(v) {
+  if (typeof v === "bigint") return v.toString();
+  if (Array.isArray(v)) return v.map(__s);
+  if (v && typeof v === "object") {
+    const o = {};
+    for (const k of Object.keys(v)) o[k] = __s(v[k]);
+    return o;
+  }
+  return v;
+}
+async function __enc(o) {
+  const d = await bankr.chain.encodeFunctionData(__s(o));
+  if (typeof d !== "string" || d.slice(0, 2) !== "0x" || d.length < 10) {
+    throw new Error("encodeFunctionData returned " + (typeof d) + " for " + (o && o.functionName));
+  }
+  return d;
+}
+async function __read(o) { return await bankr.chain.readContract(__s(o)); }
+async function __multi(o) { return await bankr.chain.multicall(__s(o)); }
+// ---------------------------------------------------------------------------
 // BANKRLIQ — prepareCloseAll (OWNER-ONLY free twin of the paid close-all
 // endpoint, $1.00 for everyone else). Closes multiple positions in ONE
 // signature: each NFT's decreaseLiquidity + collect + burn packed into a
@@ -110,7 +135,7 @@ const slot0Cache = {};
 
 for (const tokenId of ids) {
   try {
-    const p = norm(await bankr.chain.readContract({
+    const p = norm(await __read({
       chain: chainKey, address: cfg.npm, abi: NPM_ABI, functionName: "positions", args: [tokenId],
     }));
     if (!p) throw new Error("position not found");
@@ -119,7 +144,7 @@ for (const tokenId of ids) {
     const liq = BigInt(p[7]);
     const owed0 = BigInt(p[10]), owed1 = BigInt(p[11]);
     if (liq === BigInt(0) && owed0 === BigInt(0) && owed1 === BigInt(0)) {
-      calls.push(bankr.chain.encodeFunctionData({ abi: NPM_ABI, functionName: "burn", args: [tokenId] }));
+      calls.push(await __enc({ abi: NPM_ABI, functionName: "burn", args: [tokenId] }));
       closed.push({ tokenId: tokenId.toString(), steps: ["burn"] });
       continue;
     }
@@ -129,11 +154,11 @@ for (const tokenId of ids) {
       try {
         const poolKey = token0 + token1 + fee;
         if (slot0Cache[poolKey] === undefined) {
-          const pAddr = norm(await bankr.chain.readContract({
+          const pAddr = norm(await __read({
             chain: chainKey, address: cfg.factory, abi: FACTORY_ABI, functionName: "getPool", args: [token0, token1, fee],
           }));
           if (pAddr && pAddr !== ZERO) {
-            const s0 = norm(await bankr.chain.readContract({ chain: chainKey, address: pAddr, abi: POOL_ABI, functionName: "slot0", args: [] }));
+            const s0 = norm(await __read({ chain: chainKey, address: pAddr, abi: POOL_ABI, functionName: "slot0", args: [] }));
             slot0Cache[poolKey] = BigInt(s0[0]);
           } else slot0Cache[poolKey] = null;
         }
@@ -144,18 +169,18 @@ for (const tokenId of ids) {
           a1Min = (x1 * bps) / BigInt(10000);
         }
       } catch (e) { /* keep zero mins */ }
-      calls.push(bankr.chain.encodeFunctionData({
+      calls.push(await __enc({
         abi: NPM_ABI, functionName: "decreaseLiquidity",
         args: [{ tokenId, liquidity: liq, amount0Min: a0Min, amount1Min: a1Min, deadline }],
       }));
       steps.push("decrease");
     }
-    calls.push(bankr.chain.encodeFunctionData({
+    calls.push(await __enc({
       abi: NPM_ABI, functionName: "collect",
       args: [{ tokenId, recipient, amount0Max: MAX_UINT128, amount1Max: MAX_UINT128 }],
     }));
     steps.push("collect");
-    calls.push(bankr.chain.encodeFunctionData({ abi: NPM_ABI, functionName: "burn", args: [tokenId] }));
+    calls.push(await __enc({ abi: NPM_ABI, functionName: "burn", args: [tokenId] }));
     steps.push("burn");
     closed.push({ tokenId: tokenId.toString(), steps });
   } catch (e) {
@@ -164,7 +189,7 @@ for (const tokenId of ids) {
 }
 if (!calls.length) return { error: "nothing to close (all token ids were skipped)" };
 
-const data = bankr.chain.encodeFunctionData({ abi: NPM_ABI, functionName: "multicall", args: [[...calls]] });
+const data = await __enc({ abi: NPM_ABI, functionName: "multicall", args: [[...calls]] });
 const label = "Close ALL " + closed.length + " position(s)";
 let blob = null;
 try { blob = await bankr.tx.prepare({ chain: chainKey, to: cfg.npm, data, label }); } catch (e) { blob = null; }
