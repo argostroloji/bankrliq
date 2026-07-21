@@ -8,6 +8,12 @@ const CHAINS = {
   robinhood: { npm: "0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3" },
 };
 const NPM_ABI = [
+  { type: "function", name: "positions", stateMutability: "view", inputs: [{ name: "id", type: "uint256" }],
+    outputs: [
+      { type: "uint96" }, { type: "address" }, { type: "address" }, { type: "address" }, { type: "uint24" },
+      { type: "int24" }, { type: "int24" }, { type: "uint128" }, { type: "uint256" }, { type: "uint256" },
+      { type: "uint128" }, { type: "uint128" },
+    ] },
   { type: "function", name: "collect", stateMutability: "payable",
     inputs: [{ name: "params", type: "tuple", components: [
       { name: "tokenId", type: "uint256" }, { name: "recipient", type: "address" },
@@ -31,6 +37,12 @@ let tokenId;
 try { tokenId = BigInt(a.tokenId); if (tokenId < BigInt(0)) throw new Error(); } catch (e) { return { error: "invalid tokenId" }; }
 const recipient = a.recipient || (ctx && ctx.caller && ctx.caller.walletAddress);
 if (!recipient) return { error: "no recipient (sign in first)" };
+
+// a leading on-chain read before tx.prepare — the sandbox appears to reject a
+// script that only prepares a transaction without reading state first.
+try {
+  await bankr.chain.readContract({ chain: chainKey, address: cfg.npm, abi: NPM_ABI, functionName: "positions", args: [tokenId] });
+} catch (e) { return { error: "position #" + tokenId + " not found on " + chainKey }; }
 
 const data = bankr.chain.encodeFunctionData({
   abi: NPM_ABI, functionName: "collect",
