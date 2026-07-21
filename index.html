@@ -289,9 +289,11 @@ function toast(msg, isErr) {
   clearTimeout(t._h);
   t._h = setTimeout(function () { t.className = ""; }, 4200);
 }
+/* numeric entities built from char codes — the deploy pipeline HTML-decodes
+   the source once, so the script must not contain any complete entity */
 function esc(s) {
   return String(s).replace(/[&<>"']/g, function (c) {
-    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    return "&" + "#" + c.charCodeAt(0) + ";";
   });
 }
 function fmtUsd(v) {
@@ -550,7 +552,7 @@ function renderDeepPools(data) {
       fee: p.fee, tvlUsd: p.tvlUsd, vol24hUsd: p.vol24hUsd, aprEst: p.aprEst,
       tick: p.tick, address: p.address, volNote: p.volNote,
       priceLabel: "1 " + esc(p.token0.symbol) + " = <b>" + fmtNum(p.price0In1) + "</b> " + esc(p.token1.symbol) +
-        " &nbsp;·&nbsp; 1 " + esc(p.token1.symbol) + " = <b>" + fmtNum(p.price1In0) + "</b> " + esc(p.token0.symbol),
+        "  ·  1 " + esc(p.token1.symbol) + " = <b>" + fmtNum(p.price1In0) + "</b> " + esc(p.token0.symbol),
     }, { badges: badges, share: share, openBtn: true });
     el.querySelector("[data-open]").addEventListener("click", function () {
       setOpenCtx({
@@ -813,7 +815,7 @@ function renderOpenCtx() {
     $("o-only1").textContent = ctx.t1.sym + " only";
     $("o-poolinfo").innerHTML = "<b>" + esc(ctx.t0.sym) + " / " + esc(ctx.t1.sym) + "</b> · " +
       (FEE_LABEL[ctx.fee] || ctx.fee) + " on " + esc(CHAINS[ctx.chain].name) +
-      " &nbsp;—&nbsp; 1 " + esc(ctx.t0.sym) + " = <b>" + fmtNum(ctx.price0In1) + "</b> " + esc(ctx.t1.sym);
+      "  —  1 " + esc(ctx.t0.sym) + " = <b>" + fmtNum(ctx.price0In1) + "</b> " + esc(ctx.t1.sym);
   }
 }
 /* Single-sided ranges: a ~10%-wide band that sits entirely above (token0-only)
