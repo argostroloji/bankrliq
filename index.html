@@ -408,6 +408,13 @@ async function agentDo(instruction) {
   if (typeof b.prefillChat === "function") { b.prefillChat(instruction); return; }
   throw new Error("Bankr chat is unavailable — open this app inside the Bankr terminal");
 }
+/* The agent handles simple calls (collect) natively but mis-encodes the
+   decreaseLiquidity tuple, so multi-step closes are sent as EXACT pre-built
+   calldata for the agent to broadcast verbatim from the user's wallet. */
+async function agentSubmitRaw(tx, whatFor) {
+  return agentDo("Submit this EXACT transaction from my wallet — do NOT reconstruct, decode, re-encode or modify it in any way, just broadcast it as-is (" + whatFor + "). " +
+    "Chain: " + chainName(tx.chain) + " (chainId " + tx.chainId + "). To: " + tx.to + ". Value: 0. Data: " + tx.data);
+}
 
 /* mint calldata, client-side (owner free path) */
 var SEL_MINT = "88316456", SEL_APPROVE = "095ea7b3";
@@ -759,8 +766,8 @@ $("p-closeall-yes").addEventListener("click", async function (ev) {
   btn.innerHTML = '<span class="spinner"></span> preparing…';
   try {
     btn.innerHTML = '<span class="spinner"></span> sending…';
-    await agentDo("Close all my Uniswap V3 LP positions on " + chainName(d.chain) + " (token IDs " + ids.join(", ") +
-      "): for each, remove ALL liquidity with amount0Min and amount1Min set to 0 (accept any amount out) and a deadline 20 minutes from now, then collect all fees and burn the NFT, sending everything to my wallet.");
+    await agentSubmitRaw(ownerCloseAllTx(d.chain, livePositions()),
+      "close all " + ids.length + " LP positions (IDs " + ids.join(", ") + ") in one multicall");
     btn.textContent = "Sent to Bankr agent →";
     toast("Sent to the Bankr agent (see the chat) — closing " + ids.length + " positions");
   } catch (e) {
@@ -829,8 +836,8 @@ function renderPositions(data) {
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> preparing…';
       try {
-        await agentDo("Fully close my Uniswap V3 LP position " + p.tokenId + " on " + chainName(chainKey) +
-          ": remove ALL liquidity with amount0Min and amount1Min set to 0 (accept any amount out), a deadline 20 minutes from now, then collect all fees and burn the NFT, sending everything to my wallet.");
+        await agentSubmitRaw(ownerCloseTx(chainKey, p.tokenId, p.liquidity, 100, true),
+          "fully close LP position " + p.tokenId + ": decreaseLiquidity + collect + burn in one multicall");
         btn.textContent = "Sent to Bankr agent →";
         toast("Sent to the Bankr agent (see the chat) — it will close the position from your wallet");
       } catch (e) {
@@ -871,8 +878,8 @@ function renderPositions(data) {
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> preparing…';
       try {
-        await agentDo("Remove " + pct + "% of the liquidity from my Uniswap V3 LP position " + p.tokenId + " on " + chainName(chainKey) +
-          " with amount0Min and amount1Min set to 0 (accept any amount out) and a deadline 20 minutes from now, then collect the fees to my wallet, keeping the position open.");
+        await agentSubmitRaw(ownerCloseTx(chainKey, p.tokenId, p.liquidity, pct, false),
+          "remove " + pct + "% of LP position " + p.tokenId + " and collect fees, keeping it open");
         btn.innerHTML = "Sent to Bankr agent →";
         toast("Sent to the Bankr agent (see the chat) — it will remove " + pct + "% and collect fees");
       } catch (e) {
