@@ -4,7 +4,7 @@
   "description": "Uniswap V3 likidite havuz keşfi, pozisyon açma/kapatma ve izleme — Base + Robinhood Chain",
   "permissions": ["read:chain", "read:appdata", "write:appdata", "pay:x402"],
   "frontendIdentity": "viewer",
-  "scripts": ["getPools", "getPositions", "getBalances", "prepareMint", "prepareDecrease", "prepareCollect", "prepareBurn", "prepareClose", "findPools"],
+  "scripts": ["getPools", "getPositions", "getBalances", "prepareMint", "prepareDecrease", "prepareCollect", "prepareBurn", "prepareClose", "prepareCloseAll", "findPools"],
   "publicDataKeys": ["pools_snapshot_base", "pools_snapshot_robinhood"],
   "publicScripts": ["getPools"],
   "publicScriptLimits": [
@@ -20,7 +20,7 @@
     }
   ],
   "x402": {
-    "maxPaymentUsdPerCall": 0.5,
+    "maxPaymentUsdPerCall": 1.0,
     "allowedHosts": ["x402.bankr.bot"]
   },
   "dataSchemas": [

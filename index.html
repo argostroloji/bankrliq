@@ -162,8 +162,16 @@
       <h3>Open Positions <span class="muted" style="font-weight:400">· free</span></h3>
       <div class="row">
         <button id="p-go" class="ghost">Refresh</button>
+        <button id="p-closeall" class="danger hidden"></button>
         <span id="p-spin" class="hidden"><span class="spinner"></span> <span class="muted">reading on-chain…</span></span>
         <span id="p-owner" class="muted"></span>
+      </div>
+      <div id="p-closeall-confirm" class="hidden" style="margin-top:9px; border-top:1px solid var(--border); padding-top:9px">
+        <p class="muted" id="p-closeall-msg" style="margin-bottom:7px"></p>
+        <div class="row">
+          <button id="p-closeall-yes" class="danger">Yes, close everything</button>
+          <button id="p-closeall-no" class="ghost">Cancel</button>
+        </div>
       </div>
     </div>
     <div id="p-results"></div>
@@ -245,6 +253,7 @@
 // Update these after deploying the two x402 handlers (see README).
 var X402_POOL_FINDER = "https://x402.bankr.bot/0xa2baa5527e25de10099096a3257d0b1938f095b1/bankrliq-pool-finder";
 var X402_LIQ_ACTION = "https://x402.bankr.bot/0xa2baa5527e25de10099096a3257d0b1938f095b1/bankrliq-liq-action";
+var X402_CLOSE_ALL = "https://x402.bankr.bot/0xa2baa5527e25de10099096a3257d0b1938f095b1/bankrliq-close-all";
 
 // The app owner's wallet uses everything for free: the frontend routes owner
 // calls through free invokeScript twins (owner-gated server-side via ctx.caller)
@@ -387,6 +396,8 @@ $("chainSel").addEventListener("change", function (e) {
   autoFetchedKey = "";
   state.openCtx = null;
   renderOpenCtx();
+  lastPositionsData = null;
+  updateCloseAllBtn();
   toast("Switched to " + CHAINS[state.chain].name);
   loadSnapshot();
   maybeAutoFetchPositions();
@@ -585,6 +596,60 @@ async function fetchPositions() {
   $("p-go").disabled = false;
 }
 
+/* ---- Close All: every position in ONE multicall signature ---- */
+var lastPositionsData = null;
+function closeAllPrice() { return isOwner() ? "· FREE" : "· $1.00"; }
+function livePositions() {
+  return lastPositionsData && lastPositionsData.positions
+    ? lastPositionsData.positions.filter(function (p) { return !p.error; })
+    : [];
+}
+function updateCloseAllBtn() {
+  var n = livePositions().length;
+  var btn = $("p-closeall");
+  btn.classList.toggle("hidden", n < 2); // only useful for multi-pool users
+  $("p-closeall-confirm").classList.add("hidden");
+  if (n >= 2) btn.innerHTML = "Close All (" + n + ') <span style="opacity:.8">' + closeAllPrice() + "</span>";
+}
+$("p-closeall").addEventListener("click", function () {
+  var n = livePositions().length;
+  if (n < 2) return;
+  $("p-closeall-msg").textContent =
+    "Are you sure? This closes ALL " + n + " positions on " + CHAINS[state.chain].name +
+    " in one signature — every position's liquidity and pending fees are withdrawn to your wallet and the NFTs are burned. This cannot be undone.";
+  $("p-closeall-confirm").classList.remove("hidden");
+});
+$("p-closeall-no").addEventListener("click", function () {
+  $("p-closeall-confirm").classList.add("hidden");
+});
+$("p-closeall-yes").addEventListener("click", async function (ev) {
+  var btn = ev.currentTarget;
+  var d = lastPositionsData;
+  var ids = livePositions().map(function (p) { return p.tokenId; });
+  if (!d || ids.length < 2) return;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> preparing…';
+  try {
+    var body = { chain: d.chain, tokenIds: ids, recipient: d.owner };
+    var r;
+    if (isOwner()) {
+      r = await sdk().invokeScript("prepareCloseAll", body);
+      if (r && r.error) throw new Error(r.error);
+    } else {
+      r = await paidFetch(X402_CLOSE_ALL, { method: "POST", body: body, maxPaymentUsd: 1.0 });
+    }
+    btn.innerHTML = '<span class="spinner"></span> awaiting signature…';
+    await sdk().confirmTransaction(r.txBlobs[0].blob);
+    btn.textContent = "All closed ✓";
+    var skippedNote = r.skipped && r.skipped.length ? " (" + r.skipped.length + " skipped)" : "";
+    toast("Close-all transaction sent for signing — " + (r.closed ? r.closed.length : ids.length) + " positions in one signature" + skippedNote);
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = "Yes, close everything";
+    toast(e.message || "Close all failed", true);
+  }
+});
+
 function rangeBarHtml(lo, hi, cur) {
   lo = Number(lo); hi = Number(hi); cur = Number(cur);
   if (!(isFinite(lo) && isFinite(hi) && isFinite(cur))) return "";
@@ -597,6 +662,8 @@ function rangeBarHtml(lo, hi, cur) {
 }
 
 function renderPositions(data) {
+  lastPositionsData = data;
+  updateCloseAllBtn();
   var box = $("p-results");
   box.innerHTML = "";
   if (!data.positions || !data.positions.length) {

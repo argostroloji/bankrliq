@@ -26,6 +26,32 @@
         }
       }
     },
+    "bankrliq-close-all": {
+      "price": "1.00",
+      "description": "Close MULTIPLE Uniswap V3 LP positions in ONE transaction (Base + Robinhood Chain). Every position's decreaseLiquidity + collect + burn is packed into a single NonfungiblePositionManager.multicall, so the wallet signs exactly once. Returns txBlobs with raw {chain,to,data,value} calldata; nothing is signed server-side. Used by the Bankr Liquidity Manager app.",
+      "methods": ["POST"],
+      "scheme": "exact",
+      "schema": {
+        "input": {
+          "type": "object",
+          "properties": {
+            "chain": { "type": "string", "description": "base | robinhood (default base)" },
+            "tokenIds": { "type": "array", "description": "LP NFT ids to close (max 25)" },
+            "recipient": { "type": "string", "description": "wallet that receives all tokens and fees (required)" },
+            "slippageBps": { "type": "number", "description": "default 100 (1%)" }
+          },
+          "required": ["tokenIds", "recipient"]
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "txBlobs": { "type": "array", "description": "single entry — one multicall closing everything" },
+            "closed": { "type": "array", "description": "per-position steps included" },
+            "skipped": { "type": "array", "description": "token ids that could not be included, with reasons" }
+          }
+        }
+      }
+    },
     "bankrliq-liq-action": {
       "price": "0.50",
       "description": "Uniswap V3 LP transaction preparer for Base and Robinhood Chain. Actions: mint (approvals + mint, sign in order), decrease, collect, burn, close (decreaseLiquidity + collect [+ burn] as ONE multicall = one signature). Returns txBlobs: [{label, blob, raw}] — 'raw' is {chain,to,data,value} calldata any agent can sign with its own wallet. Nothing is signed server-side. Used by the Bankr Liquidity Manager app.",
