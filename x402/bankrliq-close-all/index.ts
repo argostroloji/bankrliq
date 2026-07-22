@@ -118,7 +118,19 @@ async function main(a) {
   });
   if (!ids.length) throw new Error("tokenIds is required (array of LP NFT ids)");
 
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + 1200);
+  // This runtime's clock lags block.timestamp by over an hour, so a deadline
+  // built from Date.now() is already expired when checkDeadline sees it. Ask the
+  // chain for its own time instead.
+  let chainNow = null;
+  try {
+    const head = await rpcCall(cfg, "eth_getBlockByNumber", ["latest", false]);
+    const t = BigInt(head && head.timestamp ? head.timestamp : 0);
+    if (t > BigInt(1700000000)) chainNow = t;
+  } catch (e) { /* fall back below */ }
+  const localNow = BigInt(Math.floor(Date.now() / 1000));
+  const deadline = chainNow
+    ? chainNow + BigInt(3600)
+    : (localNow > BigInt(1700000000) ? localNow : BigInt(1784000000)) + BigInt(86400);
   const calls = [];
   const closed = [];
   const skipped = [];

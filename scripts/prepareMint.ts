@@ -23,6 +23,28 @@ async function __enc(o) {
 async function __read(o) { return await bankr.chain.readContract(__s(o)); }
 async function __multi(o) { return await bankr.chain.multicall(__s(o)); }
 // ---------------------------------------------------------------------------
+// --- deadline from CHAIN time, not the sandbox clock ------------------------
+// Uniswap's checkDeadline compares against block.timestamp. The script sandbox
+// clock lags real chain time by over an hour, so a deadline derived from
+// Date.now() arrives already expired. Multicall3 is deployed at the same
+// address on both chains and reports block.timestamp directly.
+const MC3_ADDR = "0xcA11bde05977b3631167028862bE2a173976CA11";
+const MC3_TIME_ABI = [
+  { type: "function", name: "getCurrentBlockTimestamp", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+];
+async function chainDeadline(ck, marginSeconds) {
+  const margin = BigInt(marginSeconds || 3600);
+  try {
+    const raw = await __read({ chain: ck, address: MC3_ADDR, abi: MC3_TIME_ABI, functionName: "getCurrentBlockTimestamp", args: [] });
+    const t = BigInt((raw && typeof raw === "object" && "result" in raw ? raw.result : raw) || 0);
+    if (t > BigInt(1700000000)) return t + margin;
+  } catch (e) { /* fall through to the padded local clock */ }
+  // No chain time available: pad generously rather than by an hour, since the
+  // local clock is known to lag and we cannot tell by how much.
+  const local = BigInt(Math.floor(Date.now() / 1000));
+  return (local > BigInt(1700000000) ? local : BigInt(1784000000)) + BigInt(86400);
+}
+// ---------------------------------------------------------------------------
 // BANKRLIQ — prepareMint
 // args: { chain, token0, token1, fee, amount0, amount1 (decimal strings),
 //         rangeMode: "auto10"|"auto20"|"full"|"manual", tickLower?, tickUpper?,
@@ -104,8 +126,8 @@ function alignTick(t, spacing, up) {
   return Math.min(Math.max(q * spacing, lo), hi);
 }
 
-// the paid x402 liq-action endpoint ($0.50). ctx.caller comes from Bankr auth
-// and cannot be spoofed.
+// ctx.caller comes from Bankr auth and cannot be spoofed. The app is free —
+// the caller is only used to identify whose wallet funds the position.
 const callerAddr = ctx && ctx.caller && ctx.caller.walletAddress;
 if (!callerAddr) return { error: "sign in first" };
 
@@ -189,7 +211,7 @@ if (tickLower >= tickUpper) return { error: "tickLower must be < tickUpper" };
 const bps = BigInt(10000 - slippageBps);
 const amount0Min = (amount0Desired * bps) / BigInt(10000);
 const amount1Min = (amount1Desired * bps) / BigInt(10000);
-const deadline = BigInt(Math.floor(Date.now()/1000) > 1750000000 ? Math.floor(Date.now()/1000) + 3600 : 4102444800);
+const deadline = await chainDeadline(chainKey, 3600);
 
 // tx.prepare only works when the caller is the owner/agent context; in viewer
 // context it is blocked, so it is best-effort and `raw` is always present.

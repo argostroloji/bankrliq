@@ -16,7 +16,11 @@ Uniswap V3 liquidity management through three paid x402 endpoints. You pay per
 call with the user's USDC (tiny, fixed prices below), get JSON back, and sign
 transactions with the user's wallet.
 
-## Endpoints — ALL FREE ($0, no payment needed)
+## Endpoints — $0.001 USDC per call (x402 pays automatically)
+
+> A price of "0" is NOT valid on x402: the endpoint deploys but every call then
+> fails with "Endpoint payment configuration error". 0.001 is the practical
+> floor. The BANKRLIQ app itself is free — only these agent endpoints are priced.
 
 | Endpoint | What |
 |---|---|

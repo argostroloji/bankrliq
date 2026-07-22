@@ -192,7 +192,24 @@ async function main(a) {
   const cfg = CHAINS[chainKey];
   const action = a.action;
   const parseTokenId = (v) => { const id = BigInt(v); if (id < BigInt(0)) throw new Error("invalid tokenId"); return id; };
-  const deadline = () => BigInt(Math.floor(Date.now() / 1000) + 1200);
+
+  // Uniswap's checkDeadline compares against block.timestamp, and this runtime's
+  // clock runs well over an hour behind it — a Date.now()-based deadline arrives
+  // already expired, which is exactly why every close sent from Twitter reverted
+  // in simulation. Read the chain's own clock once and derive deadlines from it.
+  let chainNow = null;
+  try {
+    const head = await rpcCall(cfg, "eth_getBlockByNumber", ["latest", false]);
+    const t = BigInt(head && head.timestamp ? head.timestamp : 0);
+    if (t > BigInt(1700000000)) chainNow = t;
+  } catch (e) { /* fall back below */ }
+  const deadline = () => {
+    if (chainNow) return chainNow + BigInt(3600);
+    // no chain clock: pad by a day rather than minutes, since the local clock is
+    // known to lag by an unknown amount
+    const local = BigInt(Math.floor(Date.now() / 1000));
+    return (local > BigInt(1700000000) ? local : BigInt(1784000000)) + BigInt(86400);
+  };
 
   if (action === "mint") {
     const fee = Number(a.fee);
